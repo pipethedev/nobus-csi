@@ -16,11 +16,10 @@ linters:
     - revive
     - staticcheck
     - unparam
-
-linters-settings:
-  revive:
-    rules:
-      - name: exported
-        disabled: true
-      - name: package-comments
-        disabled: true
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true

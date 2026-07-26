@@ -32,15 +32,30 @@ func main() {
 func run(config driver.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	provider := cloud.NewFake(cloud.InstanceMetadata{
-		InstanceID:        "nobus-test-instance",
-		AvailabilityZone:  config.AvailabilityZone,
-		Region:            "unknown",
-		MaxVolumesPerNode: 32,
-	})
+	provider, err := providerFromConfig(config)
+	if err != nil {
+		return err
+	}
 	server, err := driver.NewServer(config, provider, mount.NewFake())
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
 	}
 	return server.Serve(ctx)
+}
+
+func providerFromConfig(config driver.Config) (cloud.Cloud, error) {
+	if config.APIURL != "" || config.Token != "" {
+		return cloud.NewClient(cloud.ClientConfig{
+			BaseURL:          config.APIURL,
+			Token:            config.Token,
+			ProjectID:        config.ProjectID,
+			AvailabilityZone: config.AvailabilityZone,
+		})
+	}
+	return cloud.NewFake(cloud.InstanceMetadata{
+		InstanceID:        "nobus-test-instance",
+		AvailabilityZone:  config.AvailabilityZone,
+		Region:            "unknown",
+		MaxVolumesPerNode: 32,
+	}), nil
 }
