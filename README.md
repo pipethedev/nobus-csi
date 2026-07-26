@@ -64,7 +64,7 @@ Unknown parameters are rejected with `INVALID_ARGUMENT`.
 
 ## Provider Limits
 
-The Nobus OpenAPI currently exposes AZ-scoped list endpoints without page-token or page-size parameters. `ListVolumes` and `ListSnapshots` therefore list the configured `NOBUS_AVAILABILITY_ZONE` only and return no continuation token.
+The Nobus OpenAPI currently exposes AZ-scoped list endpoints without server-side page-token or page-size parameters. `ListVolumes` and `ListSnapshots` therefore list the configured `NOBUS_AVAILABILITY_ZONE` and apply CSI pagination locally.
 
 ## Node Identity
 

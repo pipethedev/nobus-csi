@@ -98,6 +98,9 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 }
 
 func (d *Driver) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume id is required")
+	}
 	if req.GetTargetPath() == "" {
 		return nil, status.Error(codes.InvalidArgument, "target path is required")
 	}

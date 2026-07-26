@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,30 +104,41 @@ func (c *Client) getVolumeByIDInZone(ctx context.Context, id string, availabilit
 }
 
 func (c *Client) GetVolumeByName(ctx context.Context, name string, availabilityZone string) (*Volume, error) {
-	query := c.zoneQuery(availabilityZone)
-	query.Set("name", name)
-	var response volumeListResponse
-	if err := c.do(ctx, http.MethodGet, volumeListPath, query, nil, decodeJSON(&response)); err != nil {
+	volumes, _, err := c.ListVolumes(ctx, Page{Name: name, AvailabilityZone: availabilityZone})
+	if err != nil {
 		return nil, err
 	}
-	for _, volume := range response.Data.Items {
+	for _, volume := range volumes {
 		if volume.Name == name {
-			return volume.toDomain(), nil
+			clone := volume
+			return &clone, nil
 		}
 	}
 	return nil, ErrNotFound
 }
 
-func (c *Client) ListVolumes(ctx context.Context, _ Page) ([]Volume, string, error) {
+func (c *Client) ListVolumes(ctx context.Context, page Page) ([]Volume, string, error) {
+	query := c.zoneQuery(firstValue(page.AvailabilityZone, c.config.AvailabilityZone))
+	if page.Name != "" {
+		query.Set("name", page.Name)
+	}
 	var response volumeListResponse
-	if err := c.do(ctx, http.MethodGet, volumeListPath, c.zoneQuery(c.config.AvailabilityZone), nil, decodeJSON(&response)); err != nil {
+	if err := c.do(ctx, http.MethodGet, volumeListPath, query, nil, decodeJSON(&response)); err != nil {
 		return nil, "", err
 	}
 	volumes := make([]Volume, 0, len(response.Data.Items))
 	for _, volume := range response.Data.Items {
-		volumes = append(volumes, *volume.toDomain())
+		domain := volume.toDomain()
+		if domain.AvailabilityZone == "" {
+			domain.AvailabilityZone = query.Get("availability_zone")
+		}
+		volumes = append(volumes, *domain)
 	}
-	return volumes, "", nil
+	paged, token, err := paginate(volumes, page)
+	if err != nil {
+		return nil, "", err
+	}
+	return paged, token, nil
 }
 
 func (c *Client) DeleteVolume(ctx context.Context, id string) error {
@@ -221,22 +233,34 @@ func (c *Client) CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapsh
 	return response.Data.toDomain(), nil
 }
 
-func (c *Client) DeleteSnapshot(ctx context.Context, id string) error {
-	query := c.zoneQuery(c.config.AvailabilityZone)
+func (c *Client) DeleteSnapshot(ctx context.Context, id string, availabilityZone string) error {
+	query := c.zoneQuery(availabilityZone)
 	query.Set("snapshot_id", id)
 	return c.do(ctx, http.MethodDelete, snapshotPath, query, nil, nil)
 }
 
-func (c *Client) ListSnapshots(ctx context.Context, _ Page) ([]Snapshot, string, error) {
+func (c *Client) ListSnapshots(ctx context.Context, page Page) ([]Snapshot, string, error) {
+	query := c.zoneQuery(firstValue(page.AvailabilityZone, c.config.AvailabilityZone))
+	if page.Name != "" {
+		query.Set("name", page.Name)
+	}
 	var response snapshotListResponse
-	if err := c.do(ctx, http.MethodGet, snapshotListPath, c.zoneQuery(c.config.AvailabilityZone), nil, decodeJSON(&response)); err != nil {
+	if err := c.do(ctx, http.MethodGet, snapshotListPath, query, nil, decodeJSON(&response)); err != nil {
 		return nil, "", err
 	}
 	snapshots := make([]Snapshot, 0, len(response.Data.Items))
 	for _, snapshot := range response.Data.Items {
-		snapshots = append(snapshots, *snapshot.toDomain())
+		domain := snapshot.toDomain()
+		if domain.AvailabilityZone == "" {
+			domain.AvailabilityZone = query.Get("availability_zone")
+		}
+		snapshots = append(snapshots, *domain)
 	}
-	return snapshots, "", nil
+	paged, token, err := paginate(snapshots, page)
+	if err != nil {
+		return nil, "", err
+	}
+	return paged, token, nil
 }
 
 func (c *Client) GetInstanceMetadata(ctx context.Context) (*InstanceMetadata, error) {
@@ -357,7 +381,7 @@ func classifyClientError(message string) error {
 		return fmt.Errorf("%s: %w", message, ErrNotFound)
 	case strings.Contains(normalized, "already exist"), strings.Contains(normalized, "duplicate"):
 		return fmt.Errorf("%s: %w", message, ErrAlreadyExists)
-	case strings.Contains(normalized, "quota"), strings.Contains(normalized, "limit"):
+	case strings.Contains(normalized, "quota"):
 		return fmt.Errorf("%s: %w", message, ErrQuotaExceeded)
 	case strings.Contains(normalized, "rate"):
 		return fmt.Errorf("%s: %w", message, ErrRateLimited)
@@ -416,6 +440,25 @@ func firstValue(value string, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func paginate[T any](items []T, page Page) ([]T, string, error) {
+	start := 0
+	if page.Token != "" {
+		parsed, err := strconv.Atoi(page.Token)
+		if err != nil || parsed < 0 {
+			return nil, "", fmt.Errorf("invalid page token: %w", ErrInvalid)
+		}
+		start = parsed
+	}
+	if start >= len(items) {
+		return nil, "", nil
+	}
+	if page.Size <= 0 || start+page.Size >= len(items) {
+		return items[start:], "", nil
+	}
+	next := start + page.Size
+	return items[start:next], strconv.Itoa(next), nil
 }
 
 type volumeCreateRequest struct {
@@ -552,21 +595,23 @@ type apiAttachment struct {
 }
 
 type apiSnapshot struct {
-	ID       string            `json:"id"`
-	Name     string            `json:"name"`
-	VolumeID string            `json:"volume_id"`
-	Status   SnapshotStatus    `json:"status"`
-	Size     int               `json:"size"`
-	Metadata map[string]string `json:"metadata"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	VolumeID         string            `json:"volume_id"`
+	Status           SnapshotStatus    `json:"status"`
+	Size             int               `json:"size"`
+	AvailabilityZone string            `json:"availability_zone"`
+	Metadata         map[string]string `json:"metadata"`
 }
 
 func (s apiSnapshot) toDomain() *Snapshot {
 	return &Snapshot{
-		ID:        s.ID,
-		Name:      s.Name,
-		VolumeID:  s.VolumeID,
-		SizeBytes: int64(s.Size) * bytesPerGiB,
-		Status:    s.Status,
-		Metadata:  s.Metadata,
+		ID:               s.ID,
+		Name:             s.Name,
+		VolumeID:         s.VolumeID,
+		SizeBytes:        int64(s.Size) * bytesPerGiB,
+		Status:           s.Status,
+		AvailabilityZone: s.AvailabilityZone,
+		Metadata:         s.Metadata,
 	}
 }

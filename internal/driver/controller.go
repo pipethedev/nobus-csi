@@ -3,6 +3,7 @@ package driver
 import (
 	"context"
 	"errors"
+	"slices"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -46,7 +47,11 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		}
 		return nil, statusError(err)
 	}
-	return &csi.CreateVolumeResponse{Volume: csiVolume(*volume)}, nil
+	reconciled, err := d.reconcileCreatedVolume(ctx, spec, *volume)
+	if err != nil {
+		return nil, err
+	}
+	return &csi.CreateVolumeResponse{Volume: csiVolume(*reconciled)}, nil
 }
 
 func (d *Driver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
@@ -92,7 +97,9 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.Controlle
 		if attachedElsewhere {
 			return nil, statusError(cloud.ErrConflict)
 		}
-	} else if !errors.Is(err, cloud.ErrNotFound) {
+	} else if errors.Is(err, cloud.ErrNotFound) {
+		return nil, statusError(err)
+	} else {
 		return nil, statusError(err)
 	}
 	device, err := d.cloud.AttachVolume(ctx, req.GetVolumeId(), req.GetNodeId(), zone)
@@ -115,6 +122,38 @@ func attachedDevice(volume cloud.Volume, node string) (string, bool) {
 
 func compatibleVolume(volume cloud.Volume, spec cloud.VolumeSpec) bool {
 	return volume.SizeBytes == spec.SizeBytes && volume.AvailabilityZone == spec.AvailabilityZone && volume.Type == spec.Type
+}
+
+func (d *Driver) reconcileCreatedVolume(ctx context.Context, spec cloud.VolumeSpec, created cloud.Volume) (*cloud.Volume, error) {
+	volumes, _, err := d.cloud.ListVolumes(ctx, cloud.Page{Name: spec.Name, AvailabilityZone: spec.AvailabilityZone})
+	if err != nil {
+		return nil, statusError(err)
+	}
+	compatible := make([]cloud.Volume, 0, len(volumes))
+	for _, volume := range volumes {
+		if volume.Name == spec.Name && compatibleVolume(volume, spec) {
+			compatible = append(compatible, volume)
+		}
+	}
+	if len(compatible) == 0 {
+		return &created, nil
+	}
+	slices.SortFunc(compatible, func(left cloud.Volume, right cloud.Volume) int {
+		if left.ID < right.ID {
+			return -1
+		}
+		if left.ID > right.ID {
+			return 1
+		}
+		return 0
+	})
+	canonical := compatible[0]
+	if created.ID != canonical.ID {
+		if err := d.cloud.DeleteVolume(ctx, created.ID); err != nil && !errors.Is(err, cloud.ErrNotFound) {
+			return nil, statusError(err)
+		}
+	}
+	return &canonical, nil
 }
 
 func (d *Driver) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {

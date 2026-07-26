@@ -8,11 +8,12 @@ import (
 )
 
 type Fake struct {
-	mu        sync.Mutex
-	volumes   map[string]Volume
-	snapshots map[string]Snapshot
-	metadata  InstanceMetadata
-	failures  map[string]error
+	mu              sync.Mutex
+	volumes         map[string]Volume
+	snapshots       map[string]Snapshot
+	metadata        InstanceMetadata
+	failures        map[string]error
+	allowDuplicates bool
 }
 
 func NewFake(metadata InstanceMetadata) *Fake {
@@ -30,6 +31,12 @@ func (f *Fake) SetFailure(operation string, err error) {
 	f.failures[operation] = err
 }
 
+func (f *Fake) AllowDuplicateVolumeNames() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.allowDuplicates = true
+}
+
 func (f *Fake) CreateVolume(_ context.Context, spec VolumeSpec) (*Volume, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -37,7 +44,7 @@ func (f *Fake) CreateVolume(_ context.Context, spec VolumeSpec) (*Volume, error)
 		return nil, err
 	}
 	for _, volume := range f.volumes {
-		if volume.Name == spec.Name {
+		if !f.allowDuplicates && volume.Name == spec.Name {
 			if volume.SizeBytes != spec.SizeBytes || volume.AvailabilityZone != spec.AvailabilityZone || volume.Type != spec.Type {
 				return nil, ErrAlreadyExists
 			}
@@ -74,7 +81,7 @@ func (f *Fake) GetVolumeByName(_ context.Context, name string, availabilityZone 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, volume := range f.volumes {
-		if volume.Name == name && volume.AvailabilityZone == availabilityZone {
+		if volume.Name == name && (availabilityZone == "" || volume.AvailabilityZone == availabilityZone) {
 			clone := volume
 			return &clone, nil
 		}
@@ -82,14 +89,20 @@ func (f *Fake) GetVolumeByName(_ context.Context, name string, availabilityZone 
 	return nil, ErrNotFound
 }
 
-func (f *Fake) ListVolumes(_ context.Context, _ Page) ([]Volume, string, error) {
+func (f *Fake) ListVolumes(_ context.Context, page Page) ([]Volume, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	volumes := make([]Volume, 0, len(f.volumes))
 	for _, volume := range f.volumes {
+		if page.AvailabilityZone != "" && volume.AvailabilityZone != page.AvailabilityZone {
+			continue
+		}
+		if page.Name != "" && volume.Name != page.Name {
+			continue
+		}
 		volumes = append(volumes, volume)
 	}
-	return volumes, "", nil
+	return paginate(volumes, page)
 }
 
 func (f *Fake) DeleteVolume(_ context.Context, id string) error {
@@ -170,38 +183,55 @@ func (f *Fake) CreateSnapshot(_ context.Context, spec SnapshotSpec) (*Snapshot, 
 	}
 	for _, snapshot := range f.snapshots {
 		if snapshot.Name == spec.Name {
+			if snapshot.VolumeID != spec.VolumeID {
+				return nil, ErrAlreadyExists
+			}
 			clone := snapshot
 			return &clone, nil
 		}
 	}
 	id := fmt.Sprintf("snap-%d", len(f.snapshots)+1)
 	snapshot := Snapshot{
-		ID:        id,
-		Name:      spec.Name,
-		VolumeID:  spec.VolumeID,
-		SizeBytes: volume.SizeBytes,
-		Status:    SnapshotStatusAvailable,
-		Metadata:  copyMap(spec.Metadata),
+		ID:               id,
+		Name:             spec.Name,
+		VolumeID:         spec.VolumeID,
+		SizeBytes:        volume.SizeBytes,
+		Status:           SnapshotStatusAvailable,
+		AvailabilityZone: spec.AvailabilityZone,
+		Metadata:         copyMap(spec.Metadata),
 	}
 	f.snapshots[id] = snapshot
 	return &snapshot, nil
 }
 
-func (f *Fake) DeleteSnapshot(_ context.Context, id string) error {
+func (f *Fake) DeleteSnapshot(_ context.Context, id string, availabilityZone string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	snapshot, ok := f.snapshots[id]
+	if !ok {
+		return nil
+	}
+	if availabilityZone != "" && snapshot.AvailabilityZone != availabilityZone {
+		return ErrNotFound
+	}
 	delete(f.snapshots, id)
 	return nil
 }
 
-func (f *Fake) ListSnapshots(_ context.Context, _ Page) ([]Snapshot, string, error) {
+func (f *Fake) ListSnapshots(_ context.Context, page Page) ([]Snapshot, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	snapshots := make([]Snapshot, 0, len(f.snapshots))
 	for _, snapshot := range f.snapshots {
+		if page.AvailabilityZone != "" && snapshot.AvailabilityZone != page.AvailabilityZone {
+			continue
+		}
+		if page.Name != "" && snapshot.Name != page.Name {
+			continue
+		}
 		snapshots = append(snapshots, snapshot)
 	}
-	return snapshots, "", nil
+	return paginate(snapshots, page)
 }
 
 func (f *Fake) GetInstanceMetadata(_ context.Context) (*InstanceMetadata, error) {

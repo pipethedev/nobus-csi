@@ -12,14 +12,16 @@ type Cloud interface {
 	AttachVolume(ctx context.Context, volumeID, instanceID string, availabilityZone string) (string, error)
 	DetachVolume(ctx context.Context, volumeID, instanceID string, availabilityZone string) error
 	CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapshot, error)
-	DeleteSnapshot(ctx context.Context, id string) error
+	DeleteSnapshot(ctx context.Context, id string, availabilityZone string) error
 	ListSnapshots(ctx context.Context, page Page) ([]Snapshot, string, error)
 	GetInstanceMetadata(ctx context.Context) (*InstanceMetadata, error)
 }
 
 type Page struct {
-	Token string
-	Size  int
+	Token            string
+	Size             int
+	Name             string
+	AvailabilityZone string
 }
 
 type VolumeSpec struct {
@@ -71,12 +73,13 @@ type SnapshotSpec struct {
 }
 
 type Snapshot struct {
-	ID        string
-	Name      string
-	VolumeID  string
-	SizeBytes int64
-	Status    SnapshotStatus
-	Metadata  map[string]string
+	ID               string
+	Name             string
+	VolumeID         string
+	SizeBytes        int64
+	Status           SnapshotStatus
+	AvailabilityZone string
+	Metadata         map[string]string
 }
 
 type SnapshotStatus string

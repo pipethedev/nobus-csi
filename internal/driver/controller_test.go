@@ -2,6 +2,8 @@ package driver
 
 import (
 	"context"
+	"slices"
+	"sync"
 	"testing"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
@@ -155,14 +157,33 @@ func TestDeleteVolume_MissingVolume_ReturnsOK(t *testing.T) {
 	}
 }
 
-func TestListVolumes_OpaqueStartingToken_ReturnsOK(t *testing.T) {
+func TestListVolumes_StartingTokenFromPreviousPage_ReturnsOK(t *testing.T) {
 	driver := newTestDriver()
-	_, err := driver.ListVolumes(context.Background(), &csi.ListVolumesRequest{
-		StartingToken: "opaque-token",
-		MaxEntries:    10,
+	_, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create first volume: %v", err)
+	}
+	second := createVolumeRequest(testGiB)
+	second.Name = "other-data"
+	_, err = driver.CreateVolume(context.Background(), second)
+	if err != nil {
+		t.Fatalf("create second volume: %v", err)
+	}
+	first, err := driver.ListVolumes(context.Background(), &csi.ListVolumesRequest{
+		MaxEntries: 1,
 	})
 	if err != nil {
-		t.Fatalf("list volumes with opaque token: %v", err)
+		t.Fatalf("list first page: %v", err)
+	}
+	if first.GetNextToken() == "" {
+		t.Fatalf("expected next token")
+	}
+	_, err = driver.ListVolumes(context.Background(), &csi.ListVolumesRequest{
+		StartingToken: first.GetNextToken(),
+		MaxEntries:    1,
+	})
+	if err != nil {
+		t.Fatalf("list next page: %v", err)
 	}
 }
 
@@ -226,6 +247,39 @@ func TestCreateVolume_RequisiteTopologyPrefersFallbackWhenAllowed(t *testing.T) 
 	zone := created.GetVolume().GetAccessibleTopology()[0].GetSegments()[TopologyZoneKey]
 	if zone != "az1" {
 		t.Fatalf("expected fallback az1 topology, got %q", zone)
+	}
+}
+
+func TestCreateVolume_DualControllerDuplicateCreate_ReturnsCanonicalAndDeletesOrphan(t *testing.T) {
+	provider := newDualCreateCloud()
+	first := New(testConfig(), provider, mount.NewFake())
+	second := New(testConfig(), provider, mount.NewFake())
+	req := createVolumeRequest(testGiB)
+	responses := make([]*csi.CreateVolumeResponse, 2)
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		responses[0], errs[0] = first.CreateVolume(context.Background(), req)
+	}()
+	go func() {
+		defer wg.Done()
+		responses[1], errs[1] = second.CreateVolume(context.Background(), req)
+	}()
+	provider.waitForCreates(2)
+	provider.releaseCreates()
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatalf("create volume: %v", err)
+		}
+	}
+	if responses[0].GetVolume().GetVolumeId() != responses[1].GetVolume().GetVolumeId() {
+		t.Fatalf("expected canonical id from both controllers, got %q and %q", responses[0].GetVolume().GetVolumeId(), responses[1].GetVolume().GetVolumeId())
+	}
+	if !provider.deleted("vol-2") {
+		t.Fatalf("expected duplicate volume vol-2 to be deleted")
 	}
 }
 
@@ -312,6 +366,80 @@ func TestCreateSnapshot_SourceVolumeExists_ReturnsSnapshot(t *testing.T) {
 	}
 }
 
+func TestCreateSnapshot_ExistingNameSameSource_ReturnsExisting(t *testing.T) {
+	driver := newTestDriver()
+	created, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	first, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: created.GetVolume().GetVolumeId(),
+	})
+	if err != nil {
+		t.Fatalf("create first snapshot: %v", err)
+	}
+	second, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: created.GetVolume().GetVolumeId(),
+	})
+	if err != nil {
+		t.Fatalf("create existing snapshot: %v", err)
+	}
+	if first.GetSnapshot().GetSnapshotId() != second.GetSnapshot().GetSnapshotId() {
+		t.Fatalf("expected existing snapshot id %q, got %q", first.GetSnapshot().GetSnapshotId(), second.GetSnapshot().GetSnapshotId())
+	}
+}
+
+func TestCreateSnapshot_ExistingNameDifferentSource_ReturnsAlreadyExists(t *testing.T) {
+	driver := newTestDriver()
+	first, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create first volume: %v", err)
+	}
+	secondReq := createVolumeRequest(testGiB)
+	secondReq.Name = "other-data"
+	second, err := driver.CreateVolume(context.Background(), secondReq)
+	if err != nil {
+		t.Fatalf("create second volume: %v", err)
+	}
+	_, err = driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: first.GetVolume().GetVolumeId(),
+	})
+	if err != nil {
+		t.Fatalf("create first snapshot: %v", err)
+	}
+	_, err = driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: second.GetVolume().GetVolumeId(),
+	})
+	if status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("expected AlreadyExists, got %s (%v)", status.Code(err), err)
+	}
+}
+
+func TestDeleteSnapshot_EncodedZoneDeletesWithSnapshotZone(t *testing.T) {
+	driver := newTestDriver()
+	created, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	snapshot, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: created.GetVolume().GetVolumeId(),
+	})
+	if err != nil {
+		t.Fatalf("create snapshot: %v", err)
+	}
+	_, err = driver.DeleteSnapshot(context.Background(), &csi.DeleteSnapshotRequest{
+		SnapshotId: snapshot.GetSnapshot().GetSnapshotId(),
+	})
+	if err != nil {
+		t.Fatalf("delete snapshot: %v", err)
+	}
+}
+
 func newTestDriver() *Driver {
 	config := testConfig()
 	provider := cloud.NewFake(cloud.InstanceMetadata{
@@ -383,4 +511,85 @@ func (multiattachCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, e
 		AvailabilityZone: "az1",
 		Multiattach:      true,
 	}, nil
+}
+
+type dualCreateCloud struct {
+	cloud.Cloud
+	mu         sync.Mutex
+	volumes    map[string]cloud.Volume
+	deletedIDs []string
+	created    chan struct{}
+	released   chan struct{}
+}
+
+func newDualCreateCloud() *dualCreateCloud {
+	return &dualCreateCloud{
+		volumes:  make(map[string]cloud.Volume),
+		created:  make(chan struct{}, 2),
+		released: make(chan struct{}),
+	}
+}
+
+func (d *dualCreateCloud) GetVolumeByName(context.Context, string, string) (*cloud.Volume, error) {
+	return nil, cloud.ErrNotFound
+}
+
+func (d *dualCreateCloud) CreateVolume(_ context.Context, spec cloud.VolumeSpec) (*cloud.Volume, error) {
+	d.mu.Lock()
+	id := "vol-1"
+	if len(d.volumes) > 0 {
+		id = "vol-2"
+	}
+	volume := cloud.Volume{
+		ID:               id,
+		Name:             spec.Name,
+		SizeBytes:        spec.SizeBytes,
+		AvailabilityZone: spec.AvailabilityZone,
+		Type:             spec.Type,
+	}
+	d.volumes[id] = volume
+	d.mu.Unlock()
+	d.created <- struct{}{}
+	<-d.released
+	return &volume, nil
+}
+
+func (d *dualCreateCloud) ListVolumes(_ context.Context, page cloud.Page) ([]cloud.Volume, string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	volumes := make([]cloud.Volume, 0, len(d.volumes))
+	for _, volume := range d.volumes {
+		if page.Name != "" && volume.Name != page.Name {
+			continue
+		}
+		if page.AvailabilityZone != "" && volume.AvailabilityZone != page.AvailabilityZone {
+			continue
+		}
+		volumes = append(volumes, volume)
+	}
+	return volumes, "", nil
+}
+
+func (d *dualCreateCloud) DeleteVolume(_ context.Context, id string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.deletedIDs = append(d.deletedIDs, id)
+	delete(d.volumes, id)
+	return nil
+}
+
+func (d *dualCreateCloud) waitForCreates(count int) {
+	for range count {
+		<-d.created
+	}
+}
+
+func (d *dualCreateCloud) releaseCreates() {
+	close(d.released)
+}
+
+func (d *dualCreateCloud) deleted(id string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Contains(d.deletedIDs, id)
 }

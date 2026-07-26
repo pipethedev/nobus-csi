@@ -51,6 +51,16 @@ func TestNodeUnstageVolume_MissingVolumeID_ReturnsInvalidArgument(t *testing.T) 
 	}
 }
 
+func TestNodeUnpublishVolume_MissingVolumeID_ReturnsInvalidArgument(t *testing.T) {
+	driver := newTestDriver()
+	_, err := driver.NodeUnpublishVolume(context.Background(), &csi.NodeUnpublishVolumeRequest{
+		TargetPath: "/target",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %s (%v)", status.Code(err), err)
+	}
+}
+
 func TestNodePublishVolume_BlockModeResolvesDevice(t *testing.T) {
 	mounter := mount.NewFake()
 	driver := New(testConfig(), cloud.NewFake(cloud.InstanceMetadata{InstanceID: "server-1"}), mounter)

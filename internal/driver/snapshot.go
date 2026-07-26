@@ -3,6 +3,7 @@ package driver
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -22,11 +23,22 @@ func (d *Driver) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequ
 	if err != nil {
 		return nil, statusError(err)
 	}
+	zone := firstValue(volume.AvailabilityZone, d.config.AvailabilityZone)
+	existing, err := d.snapshotByName(ctx, req.GetName(), zone)
+	if err == nil {
+		if existing.VolumeID != req.GetSourceVolumeId() {
+			return nil, status.Error(codes.AlreadyExists, "snapshot name exists for a different source volume")
+		}
+		return &csi.CreateSnapshotResponse{Snapshot: csiSnapshot(*existing)}, nil
+	}
+	if !errors.Is(err, cloud.ErrNotFound) {
+		return nil, statusError(err)
+	}
 	snapshot, err := d.cloud.CreateSnapshot(ctx, cloud.SnapshotSpec{
 		Name:             req.GetName(),
 		VolumeID:         req.GetSourceVolumeId(),
 		ProjectID:        d.config.ProjectID,
-		AvailabilityZone: firstValue(volume.AvailabilityZone, d.config.AvailabilityZone),
+		AvailabilityZone: zone,
 		Force:            true,
 		Metadata:         map[string]string{"csi.driver": d.config.DriverName},
 	})
@@ -40,7 +52,8 @@ func (d *Driver) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequ
 	if req.GetSnapshotId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "snapshot id is required")
 	}
-	if err := d.cloud.DeleteSnapshot(ctx, req.GetSnapshotId()); err != nil {
+	id, zone := decodeSnapshotID(req.GetSnapshotId(), d.config.AvailabilityZone)
+	if err := d.cloud.DeleteSnapshot(ctx, id, zone); err != nil {
 		if errors.Is(err, cloud.ErrNotFound) {
 			return &csi.DeleteSnapshotResponse{}, nil
 		}
@@ -61,12 +74,41 @@ func (d *Driver) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsReques
 	return &csi.ListSnapshotsResponse{Entries: entries, NextToken: token}, nil
 }
 
+func (d *Driver) snapshotByName(ctx context.Context, name string, availabilityZone string) (*cloud.Snapshot, error) {
+	snapshots, _, err := d.cloud.ListSnapshots(ctx, cloud.Page{Name: name, AvailabilityZone: availabilityZone})
+	if err != nil {
+		return nil, err
+	}
+	for _, snapshot := range snapshots {
+		if snapshot.Name == name {
+			clone := snapshot
+			return &clone, nil
+		}
+	}
+	return nil, cloud.ErrNotFound
+}
+
 func csiSnapshot(snapshot cloud.Snapshot) *csi.Snapshot {
 	return &csi.Snapshot{
 		SizeBytes:      snapshot.SizeBytes,
-		SnapshotId:     snapshot.ID,
+		SnapshotId:     encodeSnapshotID(snapshot.ID, snapshot.AvailabilityZone),
 		SourceVolumeId: snapshot.VolumeID,
 		CreationTime:   timestamppb.Now(),
 		ReadyToUse:     snapshot.Status == cloud.SnapshotStatusAvailable,
 	}
+}
+
+func encodeSnapshotID(id string, availabilityZone string) string {
+	if availabilityZone == "" {
+		return id
+	}
+	return availabilityZone + "/" + id
+}
+
+func decodeSnapshotID(id string, fallbackZone string) (string, string) {
+	zone, snapshot, ok := strings.Cut(id, "/")
+	if !ok {
+		return id, fallbackZone
+	}
+	return snapshot, zone
 }

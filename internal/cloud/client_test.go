@@ -202,7 +202,7 @@ func TestClient_DeleteSnapshot_SendsAvailabilityZone(t *testing.T) {
 		return jsonOK(t, &genericVolumeResponse{Status: true, Data: json.RawMessage(`{}`)}), nil
 	})
 	client := newTestClient(t, transport)
-	if err := client.DeleteSnapshot(context.Background(), "snap-1"); err != nil {
+	if err := client.DeleteSnapshot(context.Background(), "snap-1", "az1"); err != nil {
 		t.Fatalf("delete snapshot: %v", err)
 	}
 }
