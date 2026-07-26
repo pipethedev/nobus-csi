@@ -1,0 +1,187 @@
+package cloud
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"testing"
+)
+
+func TestClient_CreateVolume_UsesDocumentedEndpointAndAuth(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != volumePath {
+			t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if r.Header.Get("Authorization") != "Bearer token" {
+			t.Fatalf("expected bearer auth, got %q", r.Header.Get("Authorization"))
+		}
+		var body volumeCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if body.Size != 2 || body.ProjectID != "project" || body.AvailabilityZone != "az1" {
+			t.Fatalf("unexpected request body: %+v", body)
+		}
+		return jsonResponse(t, http.StatusOK, &volumeResponse{
+			Status: true,
+			Data: apiVolume{
+				ID:               "vol-1",
+				Name:             "data",
+				Size:             2,
+				Status:           VolumeStatusAvailable,
+				AvailabilityZone: "az1",
+			},
+		}), nil
+	})
+	client := newTestClient(t, transport)
+	volume, err := client.CreateVolume(context.Background(), VolumeSpec{
+		Name:             "data",
+		SizeBytes:        2 * bytesPerGiB,
+		ProjectID:        "project",
+		AvailabilityZone: "az1",
+	})
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if volume.ID != "vol-1" || volume.SizeBytes != 2*bytesPerGiB {
+		t.Fatalf("unexpected volume: %+v", volume)
+	}
+}
+
+func TestClient_GetVolumeByName_MissingReturnsNotFound(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != volumeListPath {
+			t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
+		}
+		if r.URL.Query().Get("name") != "missing" {
+			t.Fatalf("expected name query")
+		}
+		return jsonResponse(t, http.StatusOK, &volumeListResponse{Status: true}), nil
+	})
+	client := newTestClient(t, transport)
+	_, err := client.GetVolumeByName(context.Background(), "missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != volumeAttachPath {
+			t.Fatalf("expected path %s, got %s", volumeAttachPath, r.URL.Path)
+		}
+		return jsonResponse(t, http.StatusOK, &genericVolumeResponse{
+			Status: true,
+			Data: rawVolumeJSON(t, apiVolume{
+				ID: "vol-1",
+				Attachments: []apiAttachment{
+					{ServerID: "server-1", Device: "/dev/vdb"},
+				},
+			}),
+		}), nil
+	})
+	client := newTestClient(t, transport)
+	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1")
+	if err != nil {
+		t.Fatalf("attach volume: %v", err)
+	}
+	if device != "/dev/vdb" {
+		t.Fatalf("expected /dev/vdb, got %q", device)
+	}
+}
+
+func TestClient_ErrorStatus_MapsRateLimit(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonErrorResponse(t, http.StatusTooManyRequests, errorResponse{Message: "slow down"}), nil
+	})
+	client := newTestClient(t, transport)
+	_, err := client.GetVolumeByID(context.Background(), "vol-1")
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("expected ErrRateLimited, got %v", err)
+	}
+}
+
+func TestClient_ContextCanceled_DoesNotSendRequest(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if err := r.Context().Err(); err != nil {
+			return nil, err
+		}
+		t.Fatalf("expected canceled context")
+		return nil, nil
+	})
+	client := newTestClient(t, transport)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := client.GetVolumeByID(ctx, "vol-1")
+	if err == nil {
+		t.Fatalf("expected context error")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func newTestClient(t *testing.T, transport http.RoundTripper) *Client {
+	t.Helper()
+	client, err := NewClient(ClientConfig{
+		BaseURL:          "https://cloud-api.nobus.io",
+		Token:            "token",
+		ProjectID:        "project",
+		AvailabilityZone: "az1",
+		HTTPClient:       &http.Client{Transport: transport},
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	return client
+}
+
+func jsonResponse(t *testing.T, status int, value responsePayload) *http.Response {
+	t.Helper()
+	return responseWithBody(t, status, value)
+}
+
+func jsonErrorResponse(t *testing.T, status int, value errorResponse) *http.Response {
+	t.Helper()
+	return responseWithBody(t, status, value)
+}
+
+func responseWithBody(t *testing.T, status int, value responsePayload) *http.Response {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(bytes.NewReader(data)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+}
+
+func rawVolumeJSON(t *testing.T, value apiVolume) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal raw json: %v", err)
+	}
+	return data
+}
+
+type responsePayload interface {
+	responsePayload()
+}
+
+func (*volumeResponse) responsePayload()        {}
+func (*volumeListResponse) responsePayload()    {}
+func (*genericVolumeResponse) responsePayload() {}
+func (errorResponse) responsePayload()          {}
