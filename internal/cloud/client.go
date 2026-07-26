@@ -325,13 +325,20 @@ func (c *Client) do(ctx context.Context, method string, path string, query url.V
 
 func (c *Client) bearerToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.token != "" {
-		return c.token, nil
+		token := c.token
+		c.mu.Unlock()
+		return token, nil
 	}
+	c.mu.Unlock()
 	token, err := c.login(ctx)
 	if err != nil {
 		return "", err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token != "" {
+		return c.token, nil
 	}
 	c.token = token
 	return token, nil

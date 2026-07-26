@@ -35,7 +35,7 @@ func (d *Driver) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequ
 	if !errors.Is(err, cloud.ErrNotFound) {
 		return nil, statusError(err)
 	}
-	snapshot, err := d.cloud.CreateSnapshot(ctx, cloud.SnapshotSpec{
+	_, err = d.cloud.CreateSnapshot(ctx, cloud.SnapshotSpec{
 		Name:             req.GetName(),
 		VolumeID:         req.GetSourceVolumeId(),
 		ProjectID:        d.config.ProjectID,
@@ -46,7 +46,7 @@ func (d *Driver) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequ
 	if err != nil {
 		return nil, statusError(err)
 	}
-	reconciled, err := d.reconcileCreatedSnapshot(ctx, req.GetName(), req.GetSourceVolumeId(), zone, snapshot.ID)
+	reconciled, err := d.reconcileCreatedSnapshot(ctx, req.GetName(), req.GetSourceVolumeId(), zone)
 	if err != nil {
 		return nil, err
 	}
@@ -96,14 +96,21 @@ func (d *Driver) snapshotByName(ctx context.Context, name string, availabilityZo
 	return nil, cloud.ErrNotFound
 }
 
-func (d *Driver) reconcileCreatedSnapshot(ctx context.Context, name string, sourceVolumeID string, availabilityZone string, createdID string) (*cloud.Snapshot, error) {
+func (d *Driver) reconcileCreatedSnapshot(ctx context.Context, name string, sourceVolumeID string, availabilityZone string) (*cloud.Snapshot, error) {
 	var previous string
 	stable := 0
 	delay := createReconcileInitialDelay
 	for range createReconcileAttempts {
-		canonical, err := d.reconcileSnapshotByName(ctx, name, sourceVolumeID, availabilityZone, createdID)
+		canonical, err := d.reconcileSnapshotByName(ctx, name, sourceVolumeID, availabilityZone)
 		if err != nil {
-			return nil, err
+			if !errors.Is(err, cloud.ErrNotFound) {
+				return nil, grpcError(err)
+			}
+			if err := wait(ctx, delay); err != nil {
+				return nil, statusError(err)
+			}
+			delay *= 2
+			continue
 		}
 		if canonical.ID == previous {
 			stable++
@@ -119,13 +126,20 @@ func (d *Driver) reconcileCreatedSnapshot(ctx context.Context, name string, sour
 		}
 		delay *= 2
 	}
-	return d.reconcileSnapshotByName(ctx, name, sourceVolumeID, availabilityZone, createdID)
+	canonical, err := d.reconcileSnapshotByName(ctx, name, sourceVolumeID, availabilityZone)
+	if err != nil {
+		if errors.Is(err, cloud.ErrNotFound) {
+			return nil, statusError(cloud.ErrUnavailable)
+		}
+		return nil, grpcError(err)
+	}
+	return canonical, nil
 }
 
-func (d *Driver) reconcileSnapshotByName(ctx context.Context, name string, sourceVolumeID string, availabilityZone string, createdID string) (*cloud.Snapshot, error) {
+func (d *Driver) reconcileSnapshotByName(ctx context.Context, name string, sourceVolumeID string, availabilityZone string) (*cloud.Snapshot, error) {
 	snapshots, _, err := d.cloud.ListSnapshots(ctx, cloud.Page{Name: name, AvailabilityZone: availabilityZone})
 	if err != nil {
-		return nil, statusError(err)
+		return nil, err
 	}
 	compatible := make([]cloud.Snapshot, 0, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -154,11 +168,8 @@ func (d *Driver) reconcileSnapshotByName(ctx context.Context, name string, sourc
 	})
 	canonical := compatible[0]
 	for _, duplicate := range compatible[1:] {
-		if duplicate.ID != createdID {
-			continue
-		}
 		if err := d.cloud.DeleteSnapshot(ctx, duplicate.ID, availabilityZone); err != nil && !errors.Is(err, cloud.ErrNotFound) {
-			return nil, statusError(err)
+			return nil, err
 		}
 	}
 	return &canonical, nil

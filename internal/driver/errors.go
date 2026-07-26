@@ -32,3 +32,10 @@ func statusError(err error) error {
 		return status.Error(codes.Internal, "internal driver error")
 	}
 }
+
+func grpcError(err error) error {
+	if _, ok := status.FromError(err); ok {
+		return err
+	}
+	return statusError(err)
+}

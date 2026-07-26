@@ -298,6 +298,35 @@ func TestCreateVolume_StaggeredDuplicateVisibility_ReturnsStableCanonical(t *tes
 	}
 }
 
+func TestCreateVolume_PostCreateEmptyList_RetriesUntilVisible(t *testing.T) {
+	provider := newLaggedCreateCloud()
+	driver := New(testConfig(), provider, mount.NewFake())
+	resp, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if resp.GetVolume().GetVolumeId() != "vol-1" {
+		t.Fatalf("expected visible volume vol-1, got %q", resp.GetVolume().GetVolumeId())
+	}
+}
+
+func TestCreateVolume_ReconcileDeletesAllCompatibleOrphans(t *testing.T) {
+	provider := newOrphanCreateCloud()
+	driver := New(testConfig(), provider, mount.NewFake())
+	resp, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if resp.GetVolume().GetVolumeId() != "vol-1" {
+		t.Fatalf("expected canonical volume vol-1, got %q", resp.GetVolume().GetVolumeId())
+	}
+	for _, id := range []string{"vol-2", "vol-3"} {
+		if !provider.deleted(id) {
+			t.Fatalf("expected duplicate volume %s to be deleted", id)
+		}
+	}
+}
+
 func TestControllerUnpublishVolume_UsesProviderVolumeZone(t *testing.T) {
 	driver := newTestDriver()
 	req := createVolumeRequest(testGiB)
@@ -466,6 +495,20 @@ func TestCreateSnapshot_EncodesRequestZoneWhenProviderOmitsZone(t *testing.T) {
 	}
 	if resp.GetSnapshot().GetSnapshotId() != "az2/snap-1" {
 		t.Fatalf("expected zone-encoded snapshot id, got %q", resp.GetSnapshot().GetSnapshotId())
+	}
+}
+
+func TestCreateSnapshot_PostCreateEmptyList_RetriesUntilVisible(t *testing.T) {
+	driver := New(testConfig(), newLaggedSnapshotCloud(), mount.NewFake())
+	resp, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: "vol-1",
+	})
+	if err != nil {
+		t.Fatalf("create snapshot: %v", err)
+	}
+	if resp.GetSnapshot().GetSnapshotId() != "az1/snap-1" {
+		t.Fatalf("expected visible snapshot az1/snap-1, got %q", resp.GetSnapshot().GetSnapshotId())
 	}
 }
 
@@ -721,5 +764,147 @@ func (s *snapshotNoAZCloud) CreateSnapshot(context.Context, cloud.SnapshotSpec) 
 		VolumeID:  "vol-1",
 		SizeBytes: testGiB,
 		Status:    cloud.SnapshotStatusAvailable,
+	}, nil
+}
+
+type laggedCreateCloud struct {
+	cloud.Cloud
+	mu        sync.Mutex
+	created   bool
+	listCalls int
+}
+
+func newLaggedCreateCloud() *laggedCreateCloud {
+	return &laggedCreateCloud{}
+}
+
+func (l *laggedCreateCloud) ListVolumes(context.Context, cloud.Page) ([]cloud.Volume, string, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.listCalls++
+	if !l.created || l.listCalls <= 2 {
+		return nil, "", nil
+	}
+	return []cloud.Volume{
+		{
+			ID:               "vol-1",
+			Name:             "data",
+			SizeBytes:        testGiB,
+			AvailabilityZone: "az1",
+		},
+	}, "", nil
+}
+
+func (l *laggedCreateCloud) CreateVolume(context.Context, cloud.VolumeSpec) (*cloud.Volume, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.created = true
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+type orphanCreateCloud struct {
+	cloud.Cloud
+	mu         sync.Mutex
+	created    bool
+	deletedIDs []string
+}
+
+func newOrphanCreateCloud() *orphanCreateCloud {
+	return &orphanCreateCloud{}
+}
+
+func (o *orphanCreateCloud) ListVolumes(context.Context, cloud.Page) ([]cloud.Volume, string, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.created {
+		return nil, "", nil
+	}
+	return []cloud.Volume{
+		{ID: "vol-3", Name: "data", SizeBytes: testGiB, AvailabilityZone: "az1"},
+		{ID: "vol-1", Name: "data", SizeBytes: testGiB, AvailabilityZone: "az1"},
+		{ID: "vol-2", Name: "data", SizeBytes: testGiB, AvailabilityZone: "az1"},
+	}, "", nil
+}
+
+func (o *orphanCreateCloud) CreateVolume(context.Context, cloud.VolumeSpec) (*cloud.Volume, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.created = true
+	return &cloud.Volume{
+		ID:               "vol-3",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+func (o *orphanCreateCloud) DeleteVolume(_ context.Context, id string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.deletedIDs = append(o.deletedIDs, id)
+	return nil
+}
+
+func (o *orphanCreateCloud) deleted(id string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return slices.Contains(o.deletedIDs, id)
+}
+
+type laggedSnapshotCloud struct {
+	cloud.Cloud
+	mu        sync.Mutex
+	created   bool
+	listCalls int
+}
+
+func newLaggedSnapshotCloud() *laggedSnapshotCloud {
+	return &laggedSnapshotCloud{}
+}
+
+func (l *laggedSnapshotCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+func (l *laggedSnapshotCloud) ListSnapshots(context.Context, cloud.Page) ([]cloud.Snapshot, string, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.listCalls++
+	if !l.created || l.listCalls <= 2 {
+		return nil, "", nil
+	}
+	return []cloud.Snapshot{
+		{
+			ID:               "snap-1",
+			Name:             "backup",
+			VolumeID:         "vol-1",
+			SizeBytes:        testGiB,
+			Status:           cloud.SnapshotStatusAvailable,
+			AvailabilityZone: "az1",
+		},
+	}, "", nil
+}
+
+func (l *laggedSnapshotCloud) CreateSnapshot(context.Context, cloud.SnapshotSpec) (*cloud.Snapshot, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.created = true
+	return &cloud.Snapshot{
+		ID:               "snap-1",
+		Name:             "backup",
+		VolumeID:         "vol-1",
+		SizeBytes:        testGiB,
+		Status:           cloud.SnapshotStatusAvailable,
+		AvailabilityZone: "az1",
 	}, nil
 }
