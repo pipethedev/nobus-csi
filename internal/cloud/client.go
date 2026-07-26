@@ -302,11 +302,13 @@ func (c *Client) do(ctx context.Context, method string, path string, query url.V
 		if err != nil {
 			return fmt.Errorf("call Nobus API: %w", ErrUnavailable)
 		}
-		defer closeBody(resp.Body)
 		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 && c.canLogin() {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			closeBody(resp.Body)
 			c.clearToken(token)
 			continue
 		}
+		defer closeBody(resp.Body)
 		if resp.StatusCode >= http.StatusBadRequest {
 			return mapHTTPError(resp)
 		}

@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	createReconcileAttempts      = 6
-	createReconcileInitialDelay  = 10 * time.Millisecond
-	createReconcileStableSamples = 2
+	createReconcileAttempts      = 7
+	createReconcileInitialDelay  = 100 * time.Millisecond
+	createReconcileStableSamples = 3
 )
 
 func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -194,11 +194,21 @@ func (d *Driver) reconcileVolumeByName(ctx context.Context, spec cloud.VolumeSpe
 	})
 	canonical := compatible[0]
 	for _, duplicate := range compatible[1:] {
+		if !deletableDuplicateVolume(duplicate) {
+			continue
+		}
 		if err := d.cloud.DeleteVolume(ctx, duplicate.ID); err != nil && !errors.Is(err, cloud.ErrNotFound) {
+			if errors.Is(err, cloud.ErrConflict) {
+				continue
+			}
 			return nil, err
 		}
 	}
 	return &canonical, nil
+}
+
+func deletableDuplicateVolume(volume cloud.Volume) bool {
+	return len(volume.Attachments) == 0 && volume.Status != cloud.VolumeStatusInUse
 }
 
 func wait(ctx context.Context, delay time.Duration) error {

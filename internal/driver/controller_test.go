@@ -327,6 +327,24 @@ func TestCreateVolume_ReconcileDeletesAllCompatibleOrphans(t *testing.T) {
 	}
 }
 
+func TestCreateVolume_ReconcileSkipsAttachedDuplicate(t *testing.T) {
+	provider := newAttachedOrphanCreateCloud()
+	driver := New(testConfig(), provider, mount.NewFake())
+	resp, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if resp.GetVolume().GetVolumeId() != "vol-1" {
+		t.Fatalf("expected canonical volume vol-1, got %q", resp.GetVolume().GetVolumeId())
+	}
+	if provider.deleted("vol-2") {
+		t.Fatalf("expected attached duplicate vol-2 not to be deleted")
+	}
+	if !provider.deleted("vol-3") {
+		t.Fatalf("expected available duplicate vol-3 to be deleted")
+	}
+}
+
 func TestControllerUnpublishVolume_UsesProviderVolumeZone(t *testing.T) {
 	driver := newTestDriver()
 	req := createVolumeRequest(testGiB)
@@ -432,6 +450,24 @@ func TestCreateSnapshot_ExistingNameSameSource_ReturnsExisting(t *testing.T) {
 	}
 	if first.GetSnapshot().GetSnapshotId() != second.GetSnapshot().GetSnapshotId() {
 		t.Fatalf("expected existing snapshot id %q, got %q", first.GetSnapshot().GetSnapshotId(), second.GetSnapshot().GetSnapshotId())
+	}
+}
+
+func TestCreateSnapshot_ExistingNameSameSourceDeletesOrphan(t *testing.T) {
+	provider := newSnapshotOrphanCloud()
+	driver := New(testConfig(), provider, mount.NewFake())
+	resp, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: "vol-1",
+	})
+	if err != nil {
+		t.Fatalf("create snapshot: %v", err)
+	}
+	if resp.GetSnapshot().GetSnapshotId() != "az1/snap-1" {
+		t.Fatalf("expected canonical snapshot az1/snap-1, got %q", resp.GetSnapshot().GetSnapshotId())
+	}
+	if !provider.deleted("snap-2") {
+		t.Fatalf("expected duplicate snapshot snap-2 to be deleted")
 	}
 }
 
@@ -856,6 +892,43 @@ func (o *orphanCreateCloud) deleted(id string) bool {
 	return slices.Contains(o.deletedIDs, id)
 }
 
+type attachedOrphanCreateCloud struct {
+	cloud.Cloud
+	deletedIDs []string
+}
+
+func newAttachedOrphanCreateCloud() *attachedOrphanCreateCloud {
+	return &attachedOrphanCreateCloud{}
+}
+
+func (a *attachedOrphanCreateCloud) ListVolumes(context.Context, cloud.Page) ([]cloud.Volume, string, error) {
+	return []cloud.Volume{
+		{ID: "vol-1", Name: "data", SizeBytes: testGiB, AvailabilityZone: "az1"},
+		{
+			ID:               "vol-2",
+			Name:             "data",
+			SizeBytes:        testGiB,
+			Status:           cloud.VolumeStatusInUse,
+			AvailabilityZone: "az1",
+			Attachments:      []cloud.Attachment{{InstanceID: "server-b", DevicePath: "/dev/vdb"}},
+		},
+		{ID: "vol-3", Name: "data", SizeBytes: testGiB, AvailabilityZone: "az1"},
+	}, "", nil
+}
+
+func (a *attachedOrphanCreateCloud) CreateVolume(context.Context, cloud.VolumeSpec) (*cloud.Volume, error) {
+	return nil, cloud.ErrAlreadyExists
+}
+
+func (a *attachedOrphanCreateCloud) DeleteVolume(_ context.Context, id string) error {
+	a.deletedIDs = append(a.deletedIDs, id)
+	return nil
+}
+
+func (a *attachedOrphanCreateCloud) deleted(id string) bool {
+	return slices.Contains(a.deletedIDs, id)
+}
+
 type laggedSnapshotCloud struct {
 	cloud.Cloud
 	mu        sync.Mutex
@@ -907,4 +980,52 @@ func (l *laggedSnapshotCloud) CreateSnapshot(context.Context, cloud.SnapshotSpec
 		Status:           cloud.SnapshotStatusAvailable,
 		AvailabilityZone: "az1",
 	}, nil
+}
+
+type snapshotOrphanCloud struct {
+	cloud.Cloud
+	deletedIDs []string
+}
+
+func newSnapshotOrphanCloud() *snapshotOrphanCloud {
+	return &snapshotOrphanCloud{}
+}
+
+func (s *snapshotOrphanCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+func (s *snapshotOrphanCloud) ListSnapshots(context.Context, cloud.Page) ([]cloud.Snapshot, string, error) {
+	return []cloud.Snapshot{
+		{
+			ID:               "snap-2",
+			Name:             "backup",
+			VolumeID:         "vol-1",
+			SizeBytes:        testGiB,
+			Status:           cloud.SnapshotStatusAvailable,
+			AvailabilityZone: "az1",
+		},
+		{
+			ID:               "snap-1",
+			Name:             "backup",
+			VolumeID:         "vol-1",
+			SizeBytes:        testGiB,
+			Status:           cloud.SnapshotStatusAvailable,
+			AvailabilityZone: "az1",
+		},
+	}, "", nil
+}
+
+func (s *snapshotOrphanCloud) DeleteSnapshot(_ context.Context, id string, _ string) error {
+	s.deletedIDs = append(s.deletedIDs, id)
+	return nil
+}
+
+func (s *snapshotOrphanCloud) deleted(id string) bool {
+	return slices.Contains(s.deletedIDs, id)
 }

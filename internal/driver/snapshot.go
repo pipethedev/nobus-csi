@@ -25,15 +25,12 @@ func (d *Driver) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequ
 		return nil, statusError(err)
 	}
 	zone := firstValue(volume.AvailabilityZone, d.config.AvailabilityZone)
-	existing, err := d.snapshotByName(ctx, req.GetName(), zone)
+	existing, err := d.reconcileSnapshotByName(ctx, req.GetName(), req.GetSourceVolumeId(), zone)
 	if err == nil {
-		if existing.VolumeID != req.GetSourceVolumeId() {
-			return nil, status.Error(codes.AlreadyExists, "snapshot name exists for a different source volume")
-		}
 		return &csi.CreateSnapshotResponse{Snapshot: csiSnapshot(*existing)}, nil
 	}
 	if !errors.Is(err, cloud.ErrNotFound) {
-		return nil, statusError(err)
+		return nil, grpcError(err)
 	}
 	_, err = d.cloud.CreateSnapshot(ctx, cloud.SnapshotSpec{
 		Name:             req.GetName(),
@@ -77,23 +74,6 @@ func (d *Driver) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsReques
 		entries = append(entries, &csi.ListSnapshotsResponse_Entry{Snapshot: csiSnapshot(snapshot)})
 	}
 	return &csi.ListSnapshotsResponse{Entries: entries, NextToken: token}, nil
-}
-
-func (d *Driver) snapshotByName(ctx context.Context, name string, availabilityZone string) (*cloud.Snapshot, error) {
-	snapshots, _, err := d.cloud.ListSnapshots(ctx, cloud.Page{Name: name, AvailabilityZone: availabilityZone})
-	if err != nil {
-		return nil, err
-	}
-	for _, snapshot := range snapshots {
-		if snapshot.Name == name {
-			if snapshot.AvailabilityZone == "" {
-				snapshot.AvailabilityZone = availabilityZone
-			}
-			clone := snapshot
-			return &clone, nil
-		}
-	}
-	return nil, cloud.ErrNotFound
 }
 
 func (d *Driver) reconcileCreatedSnapshot(ctx context.Context, name string, sourceVolumeID string, availabilityZone string) (*cloud.Snapshot, error) {
