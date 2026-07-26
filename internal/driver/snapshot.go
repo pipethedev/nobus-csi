@@ -149,6 +149,9 @@ func (d *Driver) reconcileSnapshotByName(ctx context.Context, name string, sourc
 	canonical := compatible[0]
 	for _, duplicate := range compatible[1:] {
 		if err := d.cloud.DeleteSnapshot(ctx, duplicate.ID, availabilityZone); err != nil && !errors.Is(err, cloud.ErrNotFound) {
+			if errors.Is(err, cloud.ErrConflict) {
+				continue
+			}
 			return nil, err
 		}
 	}
@@ -156,13 +159,16 @@ func (d *Driver) reconcileSnapshotByName(ctx context.Context, name string, sourc
 }
 
 func csiSnapshot(snapshot cloud.Snapshot) *csi.Snapshot {
-	return &csi.Snapshot{
+	result := &csi.Snapshot{
 		SizeBytes:      snapshot.SizeBytes,
 		SnapshotId:     encodeSnapshotID(snapshot.ID, snapshot.AvailabilityZone),
 		SourceVolumeId: snapshot.VolumeID,
-		CreationTime:   timestamppb.Now(),
 		ReadyToUse:     snapshot.Status == cloud.SnapshotStatusAvailable,
 	}
+	if !snapshot.CreatedAt.IsZero() {
+		result.CreationTime = timestamppb.New(snapshot.CreatedAt)
+	}
+	return result
 }
 
 func encodeSnapshotID(id string, availabilityZone string) string {

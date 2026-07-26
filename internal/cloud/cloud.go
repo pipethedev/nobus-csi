@@ -1,6 +1,9 @@
 package cloud
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 type Cloud interface {
 	CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, error)
@@ -78,6 +81,7 @@ type Snapshot struct {
 	VolumeID         string
 	SizeBytes        int64
 	Status           SnapshotStatus
+	CreatedAt        time.Time
 	AvailabilityZone string
 	Metadata         map[string]string
 }

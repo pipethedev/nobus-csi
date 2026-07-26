@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"time"
 )
 
 type Fake struct {
@@ -197,6 +198,7 @@ func (f *Fake) CreateSnapshot(_ context.Context, spec SnapshotSpec) (*Snapshot, 
 		VolumeID:         spec.VolumeID,
 		SizeBytes:        volume.SizeBytes,
 		Status:           SnapshotStatusAvailable,
+		CreatedAt:        time.Now().UTC(),
 		AvailabilityZone: spec.AvailabilityZone,
 		Metadata:         copyMap(spec.Metadata),
 	}

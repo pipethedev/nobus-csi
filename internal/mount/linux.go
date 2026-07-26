@@ -172,6 +172,7 @@ func (l *Linux) filesystemType(ctx context.Context, target string) (string, erro
 }
 
 func (l *Linux) FindDevice(ctx context.Context, volumeID string, hintedPath string) (string, error) {
+	// Nobus currently exposes attached block devices through QEMU-derived by-id names.
 	candidates := []string{
 		hintedPath,
 		filepath.Join("/dev/disk/by-id", "virtio-"+volumeID),

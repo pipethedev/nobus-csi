@@ -59,6 +59,11 @@ func (d *Driver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest)
 	if req.GetVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume id is required")
 	}
+	unlock := d.locks.TryLock(req.GetVolumeId())
+	if unlock == nil {
+		return nil, status.Error(codes.Aborted, "another operation is in flight for this volume")
+	}
+	defer unlock()
 	if err := d.cloud.DeleteVolume(ctx, req.GetVolumeId()); err != nil {
 		if errors.Is(err, cloud.ErrNotFound) {
 			return &csi.DeleteVolumeResponse{}, nil
@@ -119,6 +124,15 @@ func attachedDevice(volume cloud.Volume, node string) (string, bool) {
 		}
 	}
 	return "", len(volume.Attachments) > 0
+}
+
+func attachedToNode(volume cloud.Volume, node string) bool {
+	for _, attachment := range volume.Attachments {
+		if attachment.InstanceID == node {
+			return true
+		}
+	}
+	return false
 }
 
 func compatibleVolume(volume cloud.Volume, spec cloud.VolumeSpec) bool {
@@ -226,6 +240,11 @@ func (d *Driver) ControllerUnpublishVolume(ctx context.Context, req *csi.Control
 	if req.GetVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume id is required")
 	}
+	unlock := d.locks.TryLock(req.GetVolumeId())
+	if unlock == nil {
+		return nil, status.Error(codes.Aborted, "another operation is in flight for this volume")
+	}
+	defer unlock()
 	if req.GetNodeId() == "" {
 		return d.unpublishAll(ctx, req.GetVolumeId())
 	}
@@ -239,6 +258,9 @@ func (d *Driver) ControllerUnpublishVolume(ctx context.Context, req *csi.Control
 	}
 	if volume.AvailabilityZone != "" {
 		zone = volume.AvailabilityZone
+	}
+	if !attachedToNode(*volume, req.GetNodeId()) {
+		return &csi.ControllerUnpublishVolumeResponse{}, nil
 	}
 	if err := d.cloud.DetachVolume(ctx, req.GetVolumeId(), req.GetNodeId(), zone); err != nil {
 		if errors.Is(err, cloud.ErrNotFound) {
@@ -328,6 +350,11 @@ func (d *Driver) ControllerExpandVolume(ctx context.Context, req *csi.Controller
 	if req.GetVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume id is required")
 	}
+	unlock := d.locks.TryLock(req.GetVolumeId())
+	if unlock == nil {
+		return nil, status.Error(codes.Aborted, "another operation is in flight for this volume")
+	}
+	defer unlock()
 	size, err := requestedBytes(req.GetCapacityRange(), d.config.MinimumVolumeBytes, d.config.VolumeGranularityBytes)
 	if err != nil {
 		return nil, err
@@ -335,6 +362,12 @@ func (d *Driver) ControllerExpandVolume(ctx context.Context, req *csi.Controller
 	volume, err := d.cloud.GetVolumeByID(ctx, req.GetVolumeId())
 	if err != nil {
 		return nil, statusError(err)
+	}
+	if volume.SizeBytes >= size {
+		return &csi.ControllerExpandVolumeResponse{
+			CapacityBytes:         volume.SizeBytes,
+			NodeExpansionRequired: true,
+		}, nil
 	}
 	allocated, err := d.cloud.ResizeVolume(ctx, req.GetVolumeId(), size, volume.AvailabilityZone)
 	if err != nil {

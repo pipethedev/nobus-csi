@@ -695,6 +695,7 @@ type apiSnapshot struct {
 	VolumeID         string            `json:"volume_id"`
 	Status           SnapshotStatus    `json:"status"`
 	Size             int               `json:"size"`
+	CreatedAt        time.Time         `json:"created_at"`
 	AvailabilityZone string            `json:"availability_zone"`
 	Metadata         map[string]string `json:"metadata"`
 }
@@ -706,6 +707,7 @@ func (s apiSnapshot) toDomain() *Snapshot {
 		VolumeID:         s.VolumeID,
 		SizeBytes:        int64(s.Size) * bytesPerGiB,
 		Status:           s.Status,
+		CreatedAt:        s.CreatedAt,
 		AvailabilityZone: s.AvailabilityZone,
 		Metadata:         s.Metadata,
 	}

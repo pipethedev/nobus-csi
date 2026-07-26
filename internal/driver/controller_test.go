@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
 	"github.com/brimble/nobus-csi/internal/mount"
@@ -399,6 +400,26 @@ func TestControllerExpandVolume_GrowsVolume(t *testing.T) {
 	}
 }
 
+func TestControllerExpandVolume_AlreadyLargeEnough_ReturnsExistingSize(t *testing.T) {
+	driver := newTestDriver()
+	created, err := driver.CreateVolume(context.Background(), createVolumeRequest(2*testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	resp, err := driver.ControllerExpandVolume(context.Background(), &csi.ControllerExpandVolumeRequest{
+		VolumeId: created.GetVolume().GetVolumeId(),
+		CapacityRange: &csi.CapacityRange{
+			RequiredBytes: testGiB,
+		},
+	})
+	if err != nil {
+		t.Fatalf("expand volume: %v", err)
+	}
+	if resp.GetCapacityBytes() != 2*testGiB {
+		t.Fatalf("expected existing size %d, got %d", 2*testGiB, resp.GetCapacityBytes())
+	}
+}
+
 func TestCreateSnapshot_SourceVolumeMissing_ReturnsNotFound(t *testing.T) {
 	driver := newTestDriver()
 	_, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
@@ -453,6 +474,46 @@ func TestCreateSnapshot_ExistingNameSameSource_ReturnsExisting(t *testing.T) {
 	}
 }
 
+func TestCreateSnapshot_ExistingNameSameSource_ReturnsStableCreationTime(t *testing.T) {
+	driver := newTestDriver()
+	created, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	first, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: created.GetVolume().GetVolumeId(),
+	})
+	if err != nil {
+		t.Fatalf("create first snapshot: %v", err)
+	}
+	second, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: created.GetVolume().GetVolumeId(),
+	})
+	if err != nil {
+		t.Fatalf("create existing snapshot: %v", err)
+	}
+	if !first.GetSnapshot().GetCreationTime().AsTime().Equal(second.GetSnapshot().GetCreationTime().AsTime()) {
+		t.Fatalf("expected stable creation time")
+	}
+}
+
+func TestCSISnapshot_UsesDomainCreationTime(t *testing.T) {
+	created := time.Unix(1700000000, 0).UTC()
+	snapshot := csiSnapshot(cloud.Snapshot{
+		ID:               "snap-1",
+		VolumeID:         "vol-1",
+		SizeBytes:        testGiB,
+		Status:           cloud.SnapshotStatusAvailable,
+		CreatedAt:        created,
+		AvailabilityZone: "az1",
+	})
+	if !snapshot.GetCreationTime().AsTime().Equal(created) {
+		t.Fatalf("expected provider creation time %s, got %s", created, snapshot.GetCreationTime().AsTime())
+	}
+}
+
 func TestCreateSnapshot_ExistingNameSameSourceDeletesOrphan(t *testing.T) {
 	provider := newSnapshotOrphanCloud()
 	driver := New(testConfig(), provider, mount.NewFake())
@@ -468,6 +529,24 @@ func TestCreateSnapshot_ExistingNameSameSourceDeletesOrphan(t *testing.T) {
 	}
 	if !provider.deleted("snap-2") {
 		t.Fatalf("expected duplicate snapshot snap-2 to be deleted")
+	}
+}
+
+func TestCreateSnapshot_ExistingNameSameSourceToleratesCleanupConflict(t *testing.T) {
+	provider := newSnapshotConflictOrphanCloud()
+	driver := New(testConfig(), provider, mount.NewFake())
+	resp, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: "vol-1",
+	})
+	if err != nil {
+		t.Fatalf("create snapshot: %v", err)
+	}
+	if resp.GetSnapshot().GetSnapshotId() != "az1/snap-1" {
+		t.Fatalf("expected canonical snapshot az1/snap-1, got %q", resp.GetSnapshot().GetSnapshotId())
+	}
+	if !provider.deleted("snap-2") {
+		t.Fatalf("expected duplicate snapshot delete to be attempted")
 	}
 }
 
@@ -1028,4 +1107,17 @@ func (s *snapshotOrphanCloud) DeleteSnapshot(_ context.Context, id string, _ str
 
 func (s *snapshotOrphanCloud) deleted(id string) bool {
 	return slices.Contains(s.deletedIDs, id)
+}
+
+type snapshotConflictOrphanCloud struct {
+	snapshotOrphanCloud
+}
+
+func newSnapshotConflictOrphanCloud() *snapshotConflictOrphanCloud {
+	return &snapshotConflictOrphanCloud{}
+}
+
+func (s *snapshotConflictOrphanCloud) DeleteSnapshot(_ context.Context, id string, _ string) error {
+	s.deletedIDs = append(s.deletedIDs, id)
+	return cloud.ErrConflict
 }

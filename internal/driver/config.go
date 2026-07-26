@@ -32,6 +32,7 @@ type Config struct {
 	Token                  string
 	Email                  string
 	Password               string
+	AllowFake              bool
 	ProjectID              string
 	AvailabilityZone       string
 	VolumeType             string
@@ -55,6 +56,7 @@ func ConfigFromEnv() Config {
 		Token:                  os.Getenv("NOBUS_TOKEN"),
 		Email:                  os.Getenv("NOBUS_EMAIL"),
 		Password:               os.Getenv("NOBUS_PASSWORD"),
+		AllowFake:              os.Getenv("NOBUS_ALLOW_FAKE") == "true",
 		ProjectID:              os.Getenv("NOBUS_PROJECT_ID"),
 		AvailabilityZone:       os.Getenv("NOBUS_AVAILABILITY_ZONE"),
 		VolumeType:             os.Getenv("NOBUS_VOLUME_TYPE"),

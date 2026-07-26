@@ -41,6 +41,7 @@ func run(config driver.Config) error {
 		"api_url_configured", config.APIURL != "",
 		"token_configured", config.Token != "",
 		"login_configured", config.Email != "" && config.Password != "",
+		"fake_provider_enabled", config.AllowFake,
 		"project_configured", config.ProjectID != "",
 		"availability_zone_configured", config.AvailabilityZone != "",
 	)
@@ -58,20 +59,20 @@ func run(config driver.Config) error {
 }
 
 func providerFromConfig(config driver.Config) (cloud.Cloud, error) {
-	if config.APIURL != "" || config.Token != "" || config.Email != "" || config.Password != "" {
-		return cloud.NewClient(cloud.ClientConfig{
-			BaseURL:          config.APIURL,
-			Token:            config.Token,
-			Email:            config.Email,
-			Password:         config.Password,
-			ProjectID:        config.ProjectID,
-			AvailabilityZone: config.AvailabilityZone,
-		})
+	if config.AllowFake {
+		return cloud.NewFake(cloud.InstanceMetadata{
+			InstanceID:        "nobus-test-instance",
+			AvailabilityZone:  config.AvailabilityZone,
+			Region:            "unknown",
+			MaxVolumesPerNode: 32,
+		}), nil
 	}
-	return cloud.NewFake(cloud.InstanceMetadata{
-		InstanceID:        "nobus-test-instance",
-		AvailabilityZone:  config.AvailabilityZone,
-		Region:            "unknown",
-		MaxVolumesPerNode: 32,
-	}), nil
+	return cloud.NewClient(cloud.ClientConfig{
+		BaseURL:          config.APIURL,
+		Token:            config.Token,
+		Email:            config.Email,
+		Password:         config.Password,
+		ProjectID:        config.ProjectID,
+		AvailabilityZone: config.AvailabilityZone,
+	})
 }

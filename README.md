@@ -63,6 +63,7 @@ The Nobus login email/password still live in Nomad itself via `nomad var put nob
 | `NOBUS_PROJECT_ID` | yes | none | Nobus project ID used for volume APIs. |
 | `NOBUS_AVAILABILITY_ZONE` | yes | none | Nobus availability zone used for volume APIs. |
 | `NOBUS_VOLUME_TYPE` | no | none | Default Nobus volume type. |
+| `NOBUS_ALLOW_FAKE` | no | `false` | Enables the in-memory fake provider for local tests only. Do not set this in Nomad or Kubernetes. |
 | `NOBUS_DRIVER_NAME` | no | `csi.nobus.io` | CSI driver name. |
 | `NOBUS_DRIVER_VERSION` | no | `0.1.0` | Version shown by Nomad and Kubernetes health tooling. |
 
