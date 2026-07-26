@@ -38,7 +38,7 @@ func NewLinux() *Linux {
 }
 
 func (l *Linux) IsMounted(ctx context.Context, target string) (bool, error) {
-	notMount, err := l.mounter.Interface.IsLikelyNotMountPoint(target)
+	notMount, err := l.mounter.IsLikelyNotMountPoint(target)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
@@ -80,7 +80,7 @@ func (l *Linux) Publish(ctx context.Context, source string, target string, reado
 		options = append(options, "ro")
 	}
 	return l.withContext(ctx, func() error {
-		if err := l.mounter.Interface.MountSensitive(source, target, "", options, nil); err != nil {
+		if err := l.mounter.MountSensitive(source, target, "", options, nil); err != nil {
 			return fmt.Errorf("publish %s at %s: %w", source, target, err)
 		}
 		return nil
@@ -96,7 +96,7 @@ func (l *Linux) Unmount(ctx context.Context, target string) error {
 		return nil
 	}
 	return l.withContext(ctx, func() error {
-		if err := l.mounter.Interface.Unmount(target); err != nil {
+		if err := l.mounter.Unmount(target); err != nil {
 			return fmt.Errorf("unmount %s: %w", target, err)
 		}
 		return nil
