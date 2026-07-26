@@ -32,6 +32,19 @@ func main() {
 func run(config driver.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	config.Logger.Info("starting nobus csi driver",
+		"driver", config.DriverName,
+		"version", config.Version,
+		"mode", config.Mode,
+		"endpoint", config.Endpoint,
+		"api_url_configured", config.APIURL != "",
+		"token_configured", config.Token != "",
+		"login_configured", config.Email != "" && config.Password != "",
+		"project_configured", config.ProjectID != "",
+		"availability_zone_configured", config.AvailabilityZone != "",
+	)
+
 	provider, err := providerFromConfig(config)
 	if err != nil {
 		return err

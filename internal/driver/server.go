@@ -52,6 +52,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.log.Info("preparing csi socket", "endpoint", s.config.Endpoint, "socket", address)
 	if err := os.RemoveAll(address); err != nil {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}
@@ -59,13 +60,16 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen unix socket: %w", err)
 	}
+	s.log.Info("csi grpc server listening", "mode", s.config.Mode, "socket", address)
 	errs := make(chan error, 1)
 	go func() {
 		errs <- s.server.Serve(listener)
 	}()
 	select {
 	case <-ctx.Done():
+		s.log.Info("stopping csi grpc server")
 		s.server.GracefulStop()
+		s.log.Info("csi grpc server stopped")
 		return nil
 	case err := <-errs:
 		return err
