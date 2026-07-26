@@ -222,14 +222,14 @@ func (c *Client) CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapsh
 }
 
 func (c *Client) DeleteSnapshot(ctx context.Context, id string) error {
-	query := c.baseQuery()
+	query := c.zoneQuery(c.config.AvailabilityZone)
 	query.Set("snapshot_id", id)
 	return c.do(ctx, http.MethodDelete, snapshotPath, query, nil, nil)
 }
 
 func (c *Client) ListSnapshots(ctx context.Context, _ Page) ([]Snapshot, string, error) {
 	var response snapshotListResponse
-	if err := c.do(ctx, http.MethodGet, snapshotListPath, c.baseQuery(), nil, decodeJSON(&response)); err != nil {
+	if err := c.do(ctx, http.MethodGet, snapshotListPath, c.zoneQuery(c.config.AvailabilityZone), nil, decodeJSON(&response)); err != nil {
 		return nil, "", err
 	}
 	snapshots := make([]Snapshot, 0, len(response.Data.Items))
@@ -353,8 +353,7 @@ func classifyClientError(message string) error {
 	case strings.Contains(normalized, "not found"),
 		strings.Contains(normalized, "does not exist"),
 		strings.Contains(normalized, "not attached"),
-		strings.Contains(normalized, "already detached"),
-		strings.Contains(normalized, "invalid volume"):
+		strings.Contains(normalized, "already detached"):
 		return fmt.Errorf("%s: %w", message, ErrNotFound)
 	case strings.Contains(normalized, "already exist"), strings.Contains(normalized, "duplicate"):
 		return fmt.Errorf("%s: %w", message, ErrAlreadyExists)
@@ -521,6 +520,7 @@ type apiVolume struct {
 	Status           VolumeStatus      `json:"status"`
 	AvailabilityZone string            `json:"availability_zone"`
 	VolumeType       string            `json:"volume_type"`
+	Multiattach      bool              `json:"multiattach"`
 	Metadata         map[string]string `json:"metadata"`
 	Attachments      []apiAttachment   `json:"attachments"`
 }
@@ -540,6 +540,7 @@ func (v apiVolume) toDomain() *Volume {
 		Status:           v.Status,
 		AvailabilityZone: v.AvailabilityZone,
 		Type:             v.VolumeType,
+		Multiattach:      v.Multiattach,
 		Metadata:         v.Metadata,
 		Attachments:      attachments,
 	}

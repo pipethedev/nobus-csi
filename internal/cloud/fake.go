@@ -53,6 +53,7 @@ func (f *Fake) CreateVolume(_ context.Context, spec VolumeSpec) (*Volume, error)
 		Status:           VolumeStatusAvailable,
 		AvailabilityZone: spec.AvailabilityZone,
 		Type:             spec.Type,
+		Multiattach:      false,
 		Metadata:         copyMap(spec.Metadata),
 	}
 	f.volumes[id] = volume

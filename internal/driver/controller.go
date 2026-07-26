@@ -80,6 +80,9 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.Controlle
 		if volume.AvailabilityZone != "" {
 			zone = volume.AvailabilityZone
 		}
+		if volume.Multiattach {
+			return nil, statusError(cloud.ErrConflict)
+		}
 		device, attachedElsewhere := attachedDevice(*volume, req.GetNodeId())
 		if device != "" {
 			return &csi.ControllerPublishVolumeResponse{

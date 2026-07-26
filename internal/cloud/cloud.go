@@ -40,6 +40,7 @@ type Volume struct {
 	AvailabilityZone string
 	Region           string
 	Type             string
+	Multiattach      bool
 	Metadata         map[string]string
 	Attachments      []Attachment
 }

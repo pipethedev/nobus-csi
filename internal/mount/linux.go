@@ -158,7 +158,7 @@ func (l *Linux) Expand(ctx context.Context, target string, fsType string) error 
 	case "xfs":
 		return l.run(ctx, "xfs_growfs", target)
 	default:
-		return fmt.Errorf("unsupported filesystem %q", fsType)
+		return fmt.Errorf("unsupported filesystem %q", selected)
 	}
 }
 
@@ -166,7 +166,7 @@ func (l *Linux) filesystemType(ctx context.Context, target string) (string, erro
 	cmd := l.exec.CommandContext(ctx, "findmnt", "-n", "-o", "FSTYPE", "--target", target)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", nil
+		return "", fmt.Errorf("detect filesystem for %s: %w: %s", target, err, string(output))
 	}
 	return strings.TrimSpace(string(output)), nil
 }

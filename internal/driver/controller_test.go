@@ -97,6 +97,17 @@ func TestControllerPublishVolume_AttachedElsewhere_ReturnsFailedPrecondition(t *
 	}
 }
 
+func TestControllerPublishVolume_MultiattachVolume_ReturnsFailedPrecondition(t *testing.T) {
+	driver := New(testConfig(), multiattachCloud{}, mount.NewFake())
+	_, err := driver.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: "vol-1",
+		NodeId:   "server-a",
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("expected FailedPrecondition, got %s (%v)", status.Code(err), err)
+	}
+}
+
 func TestControllerUnpublishVolume_MissingNode_ReturnsOK(t *testing.T) {
 	driver := newTestDriver()
 	_, err := driver.ControllerUnpublishVolume(context.Background(), &csi.ControllerUnpublishVolumeRequest{
@@ -196,6 +207,25 @@ func TestCreateVolume_PreferredTopologyZoneIsIdempotent(t *testing.T) {
 	zone := second.GetVolume().GetAccessibleTopology()[0].GetSegments()[TopologyZoneKey]
 	if zone != "az2" {
 		t.Fatalf("expected az2 topology, got %q", zone)
+	}
+}
+
+func TestCreateVolume_RequisiteTopologyPrefersFallbackWhenAllowed(t *testing.T) {
+	driver := newTestDriver()
+	req := createVolumeRequest(testGiB)
+	req.AccessibilityRequirements = &csi.TopologyRequirement{
+		Requisite: []*csi.Topology{
+			{Segments: map[string]string{TopologyZoneKey: "az2"}},
+			{Segments: map[string]string{TopologyZoneKey: "az1"}},
+		},
+	}
+	created, err := driver.CreateVolume(context.Background(), req)
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	zone := created.GetVolume().GetAccessibleTopology()[0].GetSegments()[TopologyZoneKey]
+	if zone != "az1" {
+		t.Fatalf("expected fallback az1 topology, got %q", zone)
 	}
 }
 
@@ -339,4 +369,18 @@ type alwaysNotFoundCloud struct {
 
 func (alwaysNotFoundCloud) DeleteVolume(context.Context, string) error {
 	return cloud.ErrNotFound
+}
+
+type multiattachCloud struct {
+	cloud.Cloud
+}
+
+func (multiattachCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+		Multiattach:      true,
+	}, nil
 }

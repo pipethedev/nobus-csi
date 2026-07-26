@@ -71,8 +71,8 @@ func selectedZone(req *csi.CreateVolumeRequest, fallback string) string {
 		}
 	}
 	if len(requisite) > 0 {
-		if fallback != "" && !slices.Contains(requisite, fallback) {
-			return requisite[0]
+		if fallback != "" && slices.Contains(requisite, fallback) {
+			return fallback
 		}
 		return requisite[0]
 	}

@@ -191,6 +191,38 @@ func TestClient_DetachVolume_NotAttachedMessageIsNotFound(t *testing.T) {
 	}
 }
 
+func TestClient_DeleteSnapshot_SendsAvailabilityZone(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != snapshotPath {
+			t.Fatalf("expected path %s, got %s", snapshotPath, r.URL.Path)
+		}
+		if r.URL.Query().Get("availability_zone") != "az1" {
+			t.Fatalf("expected az1 query, got %q", r.URL.Query().Get("availability_zone"))
+		}
+		return jsonOK(t, &genericVolumeResponse{Status: true, Data: json.RawMessage(`{}`)}), nil
+	})
+	client := newTestClient(t, transport)
+	if err := client.DeleteSnapshot(context.Background(), "snap-1"); err != nil {
+		t.Fatalf("delete snapshot: %v", err)
+	}
+}
+
+func TestClient_ListSnapshots_SendsAvailabilityZone(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != snapshotListPath {
+			t.Fatalf("expected path %s, got %s", snapshotListPath, r.URL.Path)
+		}
+		if r.URL.Query().Get("availability_zone") != "az1" {
+			t.Fatalf("expected az1 query, got %q", r.URL.Query().Get("availability_zone"))
+		}
+		return jsonOK(t, &snapshotListResponse{Status: true}), nil
+	})
+	client := newTestClient(t, transport)
+	if _, _, err := client.ListSnapshots(context.Background(), Page{}); err != nil {
+		t.Fatalf("list snapshots: %v", err)
+	}
+}
+
 func TestClient_ResizeVolume_ReturnsProviderConfirmedSize(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -322,6 +354,17 @@ func TestClient_BadRequestMessage_DefaultsToInvalid(t *testing.T) {
 	}
 }
 
+func TestClient_BadRequestInvalidVolume_DefaultsToInvalid(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{Message: "invalid volume state"}), nil
+	})
+	client := newTestClient(t, transport)
+	_, err := client.GetVolumeByID(context.Background(), "vol-1")
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("expected ErrInvalid, got %v", err)
+	}
+}
+
 func TestClient_ContextCanceled_DoesNotSendRequest(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if err := r.Context().Err(); err != nil {
@@ -400,4 +443,5 @@ func (*volumeResponse) responsePayload()        {}
 func (*volumeListResponse) responsePayload()    {}
 func (*genericVolumeResponse) responsePayload() {}
 func (*snapshotResponse) responsePayload()      {}
+func (*snapshotListResponse) responsePayload()  {}
 func (errorResponse) responsePayload()          {}
