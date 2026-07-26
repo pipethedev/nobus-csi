@@ -15,7 +15,8 @@ job "nobus-csi-controller" {
       user   = "root"
 
       config {
-        image = "ghcr.io/pipethedev/nobus-csi:latest-controller"
+        image      = "ghcr.io/pipethedev/nobus-csi:latest-controller"
+        force_pull = true
         args = [
           "-endpoint=unix:///csi/csi.sock",
           "-mode=controller",

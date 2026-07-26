@@ -8,6 +8,7 @@ job "nobus-csi-node" {
 
       config {
         image      = "ghcr.io/pipethedev/nobus-csi:latest-node"
+        force_pull = true
         privileged = true
         args = [
           "-endpoint=unix:///csi/csi.sock",
