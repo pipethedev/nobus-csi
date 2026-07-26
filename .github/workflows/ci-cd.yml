@@ -1,0 +1,155 @@
+name: ci-cd
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  GO_VERSION: "1.22"
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race detector
+        run: go test -race ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  publish:
+    name: publish images
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Controller image metadata
+        id: controller
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest-controller,enable={{is_default_branch}}
+            type=sha,prefix=,suffix=-controller
+            type=ref,event=tag,suffix=-controller
+
+      - name: Build and push controller image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.controller
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.controller.outputs.tags }}
+          labels: ${{ steps.controller.outputs.labels }}
+          cache-from: type=gha,scope=controller
+          cache-to: type=gha,mode=max,scope=controller
+
+      - name: Node image metadata
+        id: node
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest-node,enable={{is_default_branch}}
+            type=sha,prefix=,suffix=-node
+            type=ref,event=tag,suffix=-node
+
+      - name: Build and push node image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.node
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.node.outputs.tags }}
+          labels: ${{ steps.node.outputs.labels }}
+          cache-from: type=gha,scope=node
+          cache-to: type=gha,mode=max,scope=node
+
+  deploy-nomad:
+    name: deploy to nomad
+    runs-on: ubuntu-latest
+    needs: publish
+    if: github.ref == 'refs/heads/main' && vars.NOMAD_DEPLOY == 'true'
+    env:
+      NOMAD_ADDR: ${{ secrets.NOMAD_ADDR }}
+      NOMAD_TOKEN: ${{ secrets.NOMAD_TOKEN }}
+      NOBUS_PROJECT_ID: ${{ vars.NOBUS_PROJECT_ID }}
+      NOBUS_AVAILABILITY_ZONE: ${{ vars.NOBUS_AVAILABILITY_ZONE }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deploy config
+        run: |
+          test -n "$NOMAD_ADDR"
+          test -n "$NOMAD_TOKEN"
+          test -n "$NOBUS_PROJECT_ID"
+          test -n "$NOBUS_AVAILABILITY_ZONE"
+
+      - name: Render Nomad jobspecs
+        run: |
+          mkdir -p "$RUNNER_TEMP/nobus-csi"
+          sed \
+            -e "s/NOBUS_PROJECT_ID        = \"replace-me\"/NOBUS_PROJECT_ID        = \"$NOBUS_PROJECT_ID\"/" \
+            -e "s/NOBUS_AVAILABILITY_ZONE = \"replace-me\"/NOBUS_AVAILABILITY_ZONE = \"$NOBUS_AVAILABILITY_ZONE\"/" \
+            deploy/nomad/controller.nomad.hcl > "$RUNNER_TEMP/nobus-csi/controller.nomad.hcl"
+          sed \
+            -e "s/NOBUS_PROJECT_ID        = \"replace-me\"/NOBUS_PROJECT_ID        = \"$NOBUS_PROJECT_ID\"/" \
+            -e "s/NOBUS_AVAILABILITY_ZONE = \"replace-me\"/NOBUS_AVAILABILITY_ZONE = \"$NOBUS_AVAILABILITY_ZONE\"/" \
+            deploy/nomad/node.nomad.hcl > "$RUNNER_TEMP/nobus-csi/node.nomad.hcl"
+
+      - name: Run Nomad jobs
+        run: |
+          docker run --rm \
+            -e NOMAD_ADDR \
+            -e NOMAD_TOKEN \
+            -v "$RUNNER_TEMP/nobus-csi:/jobs" \
+            hashicorp/nomad:1.8.7 job run /jobs/controller.nomad.hcl
+          docker run --rm \
+            -e NOMAD_ADDR \
+            -e NOMAD_TOKEN \
+            -v "$RUNNER_TEMP/nobus-csi:/jobs" \
+            hashicorp/nomad:1.8.7 job run /jobs/node.nomad.hcl

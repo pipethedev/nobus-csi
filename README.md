@@ -16,6 +16,29 @@ Build the Linux binary for containers:
 GOOS=linux GOARCH=amd64 go build -o nobus-csi ./cmd/nobus-csi
 ```
 
+## CI/CD
+
+GitHub Actions runs build, vet, race tests, and lint on pull requests and pushes. Pushes to `main` publish these images to GitHub Container Registry using the built-in `GITHUB_TOKEN`:
+
+```text
+ghcr.io/pipethedev/nobus-csi:latest-controller
+ghcr.io/pipethedev/nobus-csi:latest-node
+```
+
+Both images are published for `linux/amd64` and `linux/arm64`.
+
+To also deploy the Nomad CSI jobs on every `main` push, configure these repository settings:
+
+| Type | Name | Description |
+|---|---|---|
+| Secret | `NOMAD_ADDR` | Nomad API address reachable from GitHub Actions. |
+| Secret | `NOMAD_TOKEN` | Nomad token allowed to run the CSI jobs. |
+| Variable | `NOMAD_DEPLOY` | Set to `true` to enable deploys. |
+| Variable | `NOBUS_PROJECT_ID` | Nobus project ID rendered into the jobspecs. |
+| Variable | `NOBUS_AVAILABILITY_ZONE` | Nobus AZ rendered into the jobspecs. |
+
+The Nobus login email/password still live in Nomad itself via `nomad var put nobus/csi`; they are not stored in GitHub Actions.
+
 ## Runtime Config
 
 | Name | Required | Default | Description |
