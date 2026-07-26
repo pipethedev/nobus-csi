@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/brimble/nobus-csi/internal/cloud"
 	"golang.org/x/sys/unix"
 	kmount "k8s.io/mount-utils"
 	utilexec "k8s.io/utils/exec"
@@ -130,8 +132,27 @@ func (l *Linux) Stats(_ context.Context, target string, block bool) (*Stats, err
 	}, nil
 }
 
+func (l *Linux) IsBlock(_ context.Context, target string) (bool, error) {
+	info, err := os.Stat(target)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, fmt.Errorf("volume path %s: %w", target, os.ErrNotExist)
+		}
+		return false, fmt.Errorf("stat volume path %s: %w", target, err)
+	}
+	return info.Mode()&os.ModeDevice != 0, nil
+}
+
 func (l *Linux) Expand(ctx context.Context, target string, fsType string) error {
-	switch fsType {
+	actual, err := l.filesystemType(ctx, target)
+	if err != nil {
+		return err
+	}
+	selected := fsType
+	if actual != "" {
+		selected = actual
+	}
+	switch selected {
 	case "ext4", "ext3", "ext2":
 		return l.run(ctx, "resize2fs", target)
 	case "xfs":
@@ -139,6 +160,15 @@ func (l *Linux) Expand(ctx context.Context, target string, fsType string) error 
 	default:
 		return fmt.Errorf("unsupported filesystem %q", fsType)
 	}
+}
+
+func (l *Linux) filesystemType(ctx context.Context, target string) (string, error) {
+	cmd := l.exec.CommandContext(ctx, "findmnt", "-n", "-o", "FSTYPE", "--target", target)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", nil
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 func (l *Linux) FindDevice(ctx context.Context, volumeID string, hintedPath string) (string, error) {
@@ -166,25 +196,19 @@ func (l *Linux) FindDevice(ctx context.Context, volumeID string, hintedPath stri
 		}
 		select {
 		case <-ctx.Done():
-			return "", fmt.Errorf("wait for device %s: %w", volumeID, ctx.Err())
+			return "", fmt.Errorf("wait for device %s: %w", volumeID, cloud.ErrUnavailable)
 		case <-deadline.C:
-			return "", fmt.Errorf("wait for device %s: %w", volumeID, os.ErrNotExist)
+			return "", fmt.Errorf("wait for device %s: %w", volumeID, cloud.ErrUnavailable)
 		case <-ticker.C:
 		}
 	}
 }
 
 func (l *Linux) withContext(ctx context.Context, action func() error) error {
-	done := make(chan error, 1)
-	go func() {
-		done <- action()
-	}()
-	select {
-	case err := <-done:
+	if err := ctx.Err(); err != nil {
 		return err
-	case <-ctx.Done():
-		return ctx.Err()
 	}
+	return action()
 }
 
 func (l *Linux) run(ctx context.Context, command string, args ...string) error {

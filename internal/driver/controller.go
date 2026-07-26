@@ -18,6 +18,11 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	if err != nil {
 		return nil, err
 	}
+	unlock := d.names.TryLock(req.GetName())
+	if unlock == nil {
+		return nil, status.Error(codes.Aborted, "another create operation is in flight for this volume name")
+	}
+	defer unlock()
 	existing, err := d.cloud.GetVolumeByName(ctx, req.GetName())
 	if err == nil {
 		if existing.SizeBytes != spec.SizeBytes || existing.AvailabilityZone != spec.AvailabilityZone || existing.Type != spec.Type {
@@ -30,6 +35,12 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	}
 	volume, err := d.cloud.CreateVolume(ctx, spec)
 	if err != nil {
+		if errors.Is(err, cloud.ErrAlreadyExists) {
+			reconciled, getErr := d.cloud.GetVolumeByName(ctx, req.GetName())
+			if getErr == nil {
+				return &csi.CreateVolumeResponse{Volume: csiVolume(*reconciled)}, nil
+			}
+		}
 		return nil, statusError(err)
 	}
 	return &csi.CreateVolumeResponse{Volume: csiVolume(*volume)}, nil
@@ -40,6 +51,9 @@ func (d *Driver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest)
 		return nil, status.Error(codes.InvalidArgument, "volume id is required")
 	}
 	if err := d.cloud.DeleteVolume(ctx, req.GetVolumeId()); err != nil {
+		if errors.Is(err, cloud.ErrNotFound) {
+			return &csi.DeleteVolumeResponse{}, nil
+		}
 		return nil, statusError(err)
 	}
 	return &csi.DeleteVolumeResponse{}, nil
@@ -57,6 +71,20 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.Controlle
 		return nil, status.Error(codes.Aborted, "another operation is in flight for this volume")
 	}
 	defer unlock()
+	volume, err := d.cloud.GetVolumeByID(ctx, req.GetVolumeId())
+	if err == nil {
+		device, attachedElsewhere := attachedDevice(*volume, req.GetNodeId())
+		if device != "" {
+			return &csi.ControllerPublishVolumeResponse{
+				PublishContext: map[string]string{"device_path": device},
+			}, nil
+		}
+		if attachedElsewhere {
+			return nil, statusError(cloud.ErrConflict)
+		}
+	} else if !errors.Is(err, cloud.ErrNotFound) {
+		return nil, statusError(err)
+	}
 	device, err := d.cloud.AttachVolume(ctx, req.GetVolumeId(), req.GetNodeId())
 	if err != nil {
 		return nil, statusError(err)
@@ -66,15 +94,46 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.Controlle
 	}, nil
 }
 
+func attachedDevice(volume cloud.Volume, node string) (string, bool) {
+	for _, attachment := range volume.Attachments {
+		if attachment.InstanceID == node {
+			return attachment.DevicePath, false
+		}
+	}
+	return "", len(volume.Attachments) > 0
+}
+
 func (d *Driver) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
 	if req.GetVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume id is required")
 	}
 	if req.GetNodeId() == "" {
-		return &csi.ControllerUnpublishVolumeResponse{}, nil
+		return d.unpublishAll(ctx, req.GetVolumeId())
 	}
 	if err := d.cloud.DetachVolume(ctx, req.GetVolumeId(), req.GetNodeId()); err != nil {
+		if errors.Is(err, cloud.ErrNotFound) {
+			return &csi.ControllerUnpublishVolumeResponse{}, nil
+		}
 		return nil, statusError(err)
+	}
+	return &csi.ControllerUnpublishVolumeResponse{}, nil
+}
+
+func (d *Driver) unpublishAll(ctx context.Context, volumeID string) (*csi.ControllerUnpublishVolumeResponse, error) {
+	volume, err := d.cloud.GetVolumeByID(ctx, volumeID)
+	if err != nil {
+		if errors.Is(err, cloud.ErrNotFound) {
+			return &csi.ControllerUnpublishVolumeResponse{}, nil
+		}
+		return nil, statusError(err)
+	}
+	for _, attachment := range volume.Attachments {
+		if err := d.cloud.DetachVolume(ctx, volumeID, attachment.InstanceID); err != nil {
+			if errors.Is(err, cloud.ErrNotFound) {
+				continue
+			}
+			return nil, statusError(err)
+		}
 	}
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }
@@ -98,11 +157,7 @@ func (d *Driver) ValidateVolumeCapabilities(_ context.Context, req *csi.Validate
 }
 
 func (d *Driver) ListVolumes(ctx context.Context, req *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
-	size, err := parsePageSize(req.GetStartingToken())
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-	volumes, token, err := d.cloud.ListVolumes(ctx, cloud.Page{Token: req.GetStartingToken(), Size: size})
+	volumes, token, err := d.cloud.ListVolumes(ctx, cloud.Page{Token: req.GetStartingToken(), Size: int(req.GetMaxEntries())})
 	if err != nil {
 		return nil, statusError(err)
 	}
@@ -175,7 +230,7 @@ func csiVolume(volume cloud.Volume) *csi.Volume {
 		VolumeContext: volumeContext(volume),
 		AccessibleTopology: []*csi.Topology{
 			{Segments: map[string]string{
-				"topology.csi.nobus.io/zone": volume.AvailabilityZone,
+				TopologyZoneKey: volume.AvailabilityZone,
 			}},
 		},
 	}

@@ -142,11 +142,14 @@ func (c *Client) ResizeVolume(ctx context.Context, id string, sizeBytes int64) (
 	if err != nil {
 		return 0, err
 	}
-	return int64(size) * bytesPerGiB, nil
+	volume, err := c.GetVolumeByID(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	return volume.SizeBytes, nil
 }
 
 func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string) (string, error) {
-	var response genericVolumeResponse
 	payload, err := encodeBody(attachVolumeRequest{
 		ProjectID:        c.config.ProjectID,
 		AvailabilityZone: c.config.AvailabilityZone,
@@ -156,20 +159,19 @@ func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string) 
 	if err != nil {
 		return "", err
 	}
-	err = c.do(ctx, http.MethodPost, volumeAttachPath, nil, payload, decodeJSON(&response))
-	if err != nil {
+	if err := c.do(ctx, http.MethodPost, volumeAttachPath, nil, payload, nil); err != nil {
 		return "", err
 	}
-	volume, err := decodeVolume(response.Data)
+	volume, err := c.GetVolumeByID(ctx, volumeID)
 	if err != nil {
 		return "", err
 	}
 	for _, attachment := range volume.Attachments {
-		if attachment.ServerID == instanceID {
-			return attachment.Device, nil
+		if attachment.InstanceID == instanceID {
+			return attachment.DevicePath, nil
 		}
 	}
-	return "", nil
+	return "", fmt.Errorf("attached volume %s has no device for instance %s: %w", volumeID, instanceID, ErrUnavailable)
 }
 
 func (c *Client) DetachVolume(ctx context.Context, volumeID, instanceID string) error {
@@ -192,6 +194,7 @@ func (c *Client) CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapsh
 		Name:             spec.Name,
 		ProjectID:        spec.ProjectID,
 		AvailabilityZone: spec.AvailabilityZone,
+		Force:            spec.Force,
 		Metadata:         spec.Metadata,
 	})
 	if err != nil {
@@ -313,13 +316,31 @@ func mapHTTPError(resp *http.Response) error {
 		return fmt.Errorf("%s: %w", message, ErrConflict)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("%s: %w", message, ErrRateLimited)
-	case http.StatusRequestEntityTooLarge, http.StatusForbidden:
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("%s: %w", message, ErrUnauthorized)
+	case http.StatusRequestEntityTooLarge:
 		return fmt.Errorf("%s: %w", message, ErrQuotaExceeded)
 	default:
 		if resp.StatusCode >= http.StatusInternalServerError {
 			return fmt.Errorf("%s: %w", message, ErrUnavailable)
 		}
-		return fmt.Errorf("%s: %w", message, ErrConflict)
+		return classifyClientError(message)
+	}
+}
+
+func classifyClientError(message string) error {
+	normalized := strings.ToLower(message)
+	switch {
+	case strings.Contains(normalized, "not found"), strings.Contains(normalized, "does not exist"):
+		return fmt.Errorf("%s: %w", message, ErrNotFound)
+	case strings.Contains(normalized, "already exist"), strings.Contains(normalized, "duplicate"):
+		return fmt.Errorf("%s: %w", message, ErrAlreadyExists)
+	case strings.Contains(normalized, "quota"), strings.Contains(normalized, "limit"):
+		return fmt.Errorf("%s: %w", message, ErrQuotaExceeded)
+	case strings.Contains(normalized, "rate"):
+		return fmt.Errorf("%s: %w", message, ErrRateLimited)
+	default:
+		return fmt.Errorf("%s: %w", message, ErrInvalid)
 	}
 }
 
@@ -333,15 +354,23 @@ func decodeVolume(data json.RawMessage) (*apiVolume, error) {
 		return &volume, nil
 	}
 	var wrapped struct {
-		Volume apiVolume `json:"volume"`
+		Volume apiVolume   `json:"volume"`
+		Item   apiVolume   `json:"item"`
+		Items  []apiVolume `json:"items"`
 	}
 	if err := json.Unmarshal(data, &wrapped); err != nil {
 		return nil, fmt.Errorf("decode Nobus volume payload: %w", err)
 	}
-	if wrapped.Volume.ID == "" {
-		return nil, ErrNotFound
+	if wrapped.Volume.ID != "" {
+		return &wrapped.Volume, nil
 	}
-	return &wrapped.Volume, nil
+	if wrapped.Item.ID != "" {
+		return &wrapped.Item, nil
+	}
+	if len(wrapped.Items) > 0 && wrapped.Items[0].ID != "" {
+		return &wrapped.Items[0], nil
+	}
+	return nil, ErrNotFound
 }
 
 type volumeCreateRequest struct {
@@ -379,6 +408,7 @@ func (extendVolumeRequest) request() {}
 type snapshotRequest struct {
 	VolumeID         string            `json:"volume_id"`
 	Name             string            `json:"name,omitempty"`
+	Force            bool              `json:"force"`
 	ProjectID        string            `json:"project_id"`
 	AvailabilityZone string            `json:"availability_zone"`
 	Metadata         map[string]string `json:"metadata,omitempty"`

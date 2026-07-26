@@ -108,6 +108,72 @@ func TestControllerUnpublishVolume_MissingNode_ReturnsOK(t *testing.T) {
 	}
 }
 
+func TestControllerUnpublishVolume_EmptyNodeDetachesAll(t *testing.T) {
+	driver := newTestDriver()
+	created, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	_, err = driver.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: created.GetVolume().GetVolumeId(),
+		NodeId:   "server-a",
+	})
+	if err != nil {
+		t.Fatalf("publish volume: %v", err)
+	}
+	_, err = driver.ControllerUnpublishVolume(context.Background(), &csi.ControllerUnpublishVolumeRequest{
+		VolumeId: created.GetVolume().GetVolumeId(),
+	})
+	if err != nil {
+		t.Fatalf("unpublish all: %v", err)
+	}
+	volume, err := driver.cloud.GetVolumeByID(context.Background(), created.GetVolume().GetVolumeId())
+	if err != nil {
+		t.Fatalf("get volume: %v", err)
+	}
+	if len(volume.Attachments) != 0 {
+		t.Fatalf("expected no attachments, got %+v", volume.Attachments)
+	}
+}
+
+func TestDeleteVolume_MissingVolume_ReturnsOK(t *testing.T) {
+	driver := New(testConfig(), alwaysNotFoundCloud{}, mount.NewFake())
+	_, err := driver.DeleteVolume(context.Background(), &csi.DeleteVolumeRequest{VolumeId: "missing"})
+	if err != nil {
+		t.Fatalf("expected missing delete to be ok: %v", err)
+	}
+}
+
+func TestListVolumes_OpaqueStartingToken_ReturnsOK(t *testing.T) {
+	driver := newTestDriver()
+	_, err := driver.ListVolumes(context.Background(), &csi.ListVolumesRequest{
+		StartingToken: "opaque-token",
+		MaxEntries:    10,
+	})
+	if err != nil {
+		t.Fatalf("list volumes with opaque token: %v", err)
+	}
+}
+
+func TestCreateVolume_TopologyMatchesNodeGetInfo(t *testing.T) {
+	driver := newTestDriver()
+	created, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	node, err := driver.NodeGetInfo(context.Background(), &csi.NodeGetInfoRequest{})
+	if err != nil {
+		t.Fatalf("get node info: %v", err)
+	}
+	volumeSegments := created.GetVolume().GetAccessibleTopology()[0].GetSegments()
+	nodeSegments := node.GetAccessibleTopology().GetSegments()
+	for key, value := range volumeSegments {
+		if nodeSegments[key] != value {
+			t.Fatalf("expected node topology %s=%q, got %q", key, value, nodeSegments[key])
+		}
+	}
+}
+
 func TestControllerExpandVolume_GrowsVolume(t *testing.T) {
 	driver := newTestDriver()
 	created, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
@@ -161,7 +227,18 @@ func TestCreateSnapshot_SourceVolumeExists_ReturnsSnapshot(t *testing.T) {
 }
 
 func newTestDriver() *Driver {
-	config := Config{
+	config := testConfig()
+	provider := cloud.NewFake(cloud.InstanceMetadata{
+		InstanceID:        "server-a",
+		AvailabilityZone:  "az1",
+		Region:            "region",
+		MaxVolumesPerNode: 32,
+	})
+	return New(config, provider, mount.NewFake())
+}
+
+func testConfig() Config {
+	return Config{
 		DriverName:             DefaultDriverName,
 		Version:                DefaultVersion,
 		Mode:                   ModeAll,
@@ -171,13 +248,6 @@ func newTestDriver() *Driver {
 		MinimumVolumeBytes:     testGiB,
 		VolumeGranularityBytes: testGiB,
 	}
-	provider := cloud.NewFake(cloud.InstanceMetadata{
-		InstanceID:        "server-a",
-		AvailabilityZone:  "az1",
-		Region:            "region",
-		MaxVolumesPerNode: 32,
-	})
-	return New(config, provider, mount.NewFake())
 }
 
 func createVolumeRequest(sizeBytes int64) *csi.CreateVolumeRequest {
@@ -205,4 +275,12 @@ func mountAccess() *csi.VolumeCapability_Mount {
 	return &csi.VolumeCapability_Mount{
 		Mount: &csi.VolumeCapability_MountVolume{FsType: "ext4"},
 	}
+}
+
+type alwaysNotFoundCloud struct {
+	cloud.Cloud
+}
+
+func (alwaysNotFoundCloud) DeleteVolume(context.Context, string) error {
+	return cloud.ErrNotFound
 }

@@ -8,6 +8,7 @@ type Interface interface {
 	Publish(ctx context.Context, source string, target string, readonly bool, block bool, flags []string) error
 	Unmount(ctx context.Context, target string) error
 	Stats(ctx context.Context, target string, block bool) (*Stats, error)
+	IsBlock(ctx context.Context, target string) (bool, error)
 	Expand(ctx context.Context, target string, fsType string) error
 	FindDevice(ctx context.Context, volumeID string, hintedPath string) (string, error)
 }

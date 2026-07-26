@@ -46,6 +46,10 @@ func (f *Fake) Stats(context.Context, string, bool) (*Stats, error) {
 	return &Stats{TotalBytes: 1 << 30, AvailableBytes: 1 << 29, UsedBytes: 1 << 29}, nil
 }
 
+func (f *Fake) IsBlock(context.Context, string) (bool, error) {
+	return false, nil
+}
+
 func (f *Fake) Expand(context.Context, string, string) error {
 	return nil
 }

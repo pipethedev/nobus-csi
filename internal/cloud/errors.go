@@ -10,4 +10,6 @@ var (
 	ErrRateLimited   = errors.New("rate limited")
 	ErrUnavailable   = errors.New("unavailable")
 	ErrOutOfRange    = errors.New("out of range")
+	ErrUnauthorized  = errors.New("unauthorized")
+	ErrInvalid       = errors.New("invalid request")
 )

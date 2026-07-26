@@ -38,6 +38,7 @@ nomad job run deploy/nomad/controller.nomad.hcl
 nomad job run deploy/nomad/node.nomad.hcl
 nomad plugin status csi.nobus.io
 nomad volume create deploy/nomad/example-volume.hcl
+nomad volume register deploy/nomad/register-volume.hcl
 ```
 
 Use `stage_publish_base_dir` with a non-default path in tests. For single-writer volumes, avoid rolling update settings that force a new allocation to claim the same volume before the old allocation releases it.

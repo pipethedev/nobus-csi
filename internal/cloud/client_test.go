@@ -28,7 +28,7 @@ func TestClient_CreateVolume_UsesDocumentedEndpointAndAuth(t *testing.T) {
 		if body.Size != 2 || body.ProjectID != "project" || body.AvailabilityZone != "az1" {
 			t.Fatalf("unexpected request body: %+v", body)
 		}
-		return jsonResponse(t, http.StatusOK, &volumeResponse{
+		return jsonOK(t, &volumeResponse{
 			Status: true,
 			Data: apiVolume{
 				ID:               "vol-1",
@@ -62,7 +62,7 @@ func TestClient_GetVolumeByName_MissingReturnsNotFound(t *testing.T) {
 		if r.URL.Query().Get("name") != "missing" {
 			t.Fatalf("expected name query")
 		}
-		return jsonResponse(t, http.StatusOK, &volumeListResponse{Status: true}), nil
+		return jsonOK(t, &volumeListResponse{Status: true}), nil
 	})
 	client := newTestClient(t, transport)
 	_, err := client.GetVolumeByName(context.Background(), "missing")
@@ -72,19 +72,35 @@ func TestClient_GetVolumeByName_MissingReturnsNotFound(t *testing.T) {
 }
 
 func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
+	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path != volumeAttachPath {
-			t.Fatalf("expected path %s, got %s", volumeAttachPath, r.URL.Path)
+		requests++
+		switch requests {
+		case 1:
+			if r.URL.Path != volumeAttachPath {
+				t.Fatalf("expected path %s, got %s", volumeAttachPath, r.URL.Path)
+			}
+			return jsonOK(t, &genericVolumeResponse{
+				Status: true,
+				Data:   json.RawMessage(`{}`),
+			}), nil
+		case 2:
+			if r.URL.Path != volumePath {
+				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			}
+			return jsonOK(t, &genericVolumeResponse{
+				Status: true,
+				Data: rawVolumeJSON(t, apiVolume{
+					ID: "vol-1",
+					Attachments: []apiAttachment{
+						{ServerID: "server-1", Device: "/dev/vdb"},
+					},
+				}),
+			}), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
 		}
-		return jsonResponse(t, http.StatusOK, &genericVolumeResponse{
-			Status: true,
-			Data: rawVolumeJSON(t, apiVolume{
-				ID: "vol-1",
-				Attachments: []apiAttachment{
-					{ServerID: "server-1", Device: "/dev/vdb"},
-				},
-			}),
-		}), nil
 	})
 	client := newTestClient(t, transport)
 	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1")
@@ -96,6 +112,64 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 	}
 }
 
+func TestClient_AttachVolume_PostAttachLookupFailure_ReturnsError(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return jsonOK(t, &genericVolumeResponse{
+				Status: true,
+				Data:   json.RawMessage(`{}`),
+			}), nil
+		}
+		return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{Message: "volume not found"}), nil
+	})
+	client := newTestClient(t, transport)
+	_, err := client.AttachVolume(context.Background(), "vol-1", "server-1")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestClient_ResizeVolume_ReturnsProviderConfirmedSize(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if r.URL.Path != volumeExtendPath {
+				t.Fatalf("expected path %s, got %s", volumeExtendPath, r.URL.Path)
+			}
+			return jsonOK(t, &genericVolumeResponse{
+				Status: true,
+				Data:   json.RawMessage(`{}`),
+			}), nil
+		case 2:
+			if r.URL.Path != volumePath {
+				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			}
+			return jsonOK(t, &genericVolumeResponse{
+				Status: true,
+				Data: rawVolumeJSON(t, apiVolume{
+					ID:   "vol-1",
+					Size: 3,
+				}),
+			}), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+	client := newTestClient(t, transport)
+	size, err := client.ResizeVolume(context.Background(), "vol-1", 2*bytesPerGiB)
+	if err != nil {
+		t.Fatalf("resize volume: %v", err)
+	}
+	if size != 3*bytesPerGiB {
+		t.Fatalf("expected provider-confirmed size %d, got %d", 3*bytesPerGiB, size)
+	}
+}
+
 func TestClient_ErrorStatus_MapsRateLimit(t *testing.T) {
 	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return jsonErrorResponse(t, http.StatusTooManyRequests, errorResponse{Message: "slow down"}), nil
@@ -104,6 +178,39 @@ func TestClient_ErrorStatus_MapsRateLimit(t *testing.T) {
 	_, err := client.GetVolumeByID(context.Background(), "vol-1")
 	if !errors.Is(err, ErrRateLimited) {
 		t.Fatalf("expected ErrRateLimited, got %v", err)
+	}
+}
+
+func TestClient_BadRequestMessage_MapsNotFound(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{Message: "volume not found"}), nil
+	})
+	client := newTestClient(t, transport)
+	_, err := client.GetVolumeByID(context.Background(), "vol-1")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestClient_BadRequestMessage_MapsAlreadyExists(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{Message: "volume already exists"}), nil
+	})
+	client := newTestClient(t, transport)
+	_, err := client.GetVolumeByID(context.Background(), "vol-1")
+	if !errors.Is(err, ErrAlreadyExists) {
+		t.Fatalf("expected ErrAlreadyExists, got %v", err)
+	}
+}
+
+func TestClient_BadRequestMessage_DefaultsToInvalid(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{Message: "bad payload"}), nil
+	})
+	client := newTestClient(t, transport)
+	_, err := client.GetVolumeByID(context.Background(), "vol-1")
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("expected ErrInvalid, got %v", err)
 	}
 }
 
@@ -145,9 +252,9 @@ func newTestClient(t *testing.T, transport http.RoundTripper) *Client {
 	return client
 }
 
-func jsonResponse(t *testing.T, status int, value responsePayload) *http.Response {
+func jsonOK(t *testing.T, value responsePayload) *http.Response {
 	t.Helper()
-	return responseWithBody(t, status, value)
+	return responseWithBody(t, http.StatusOK, value)
 }
 
 func jsonErrorResponse(t *testing.T, status int, value errorResponse) *http.Response {

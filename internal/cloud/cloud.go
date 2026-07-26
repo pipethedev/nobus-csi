@@ -65,6 +65,7 @@ type SnapshotSpec struct {
 	VolumeID         string
 	ProjectID        string
 	AvailabilityZone string
+	Force            bool
 	Metadata         map[string]string
 }
 

@@ -1,9 +1,7 @@
 package driver
 
 import (
-	"fmt"
 	"slices"
-	"strconv"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -17,6 +15,8 @@ const (
 	paramVolumeType       = "volume_type"
 	paramRegion           = "region"
 	contextVolumeType     = "volume_type"
+	TopologyZoneKey       = "topology.csi.nobus.io/zone"
+	TopologyRegionKey     = "topology.csi.nobus.io/region"
 )
 
 var supportedParameters = []string{
@@ -40,7 +40,7 @@ func volumeSpec(req *csi.CreateVolumeRequest, defaults Config) (cloud.VolumeSpec
 		return cloud.VolumeSpec{}, err
 	}
 	params := req.GetParameters()
-	zone := firstValue(params[paramAvailabilityZone], defaults.AvailabilityZone)
+	zone := selectedZone(req, firstValue(params[paramAvailabilityZone], defaults.AvailabilityZone))
 	project := firstValue(params[paramProjectID], defaults.ProjectID)
 	if zone == "" {
 		return cloud.VolumeSpec{}, status.Error(codes.InvalidArgument, "availability_zone is required")
@@ -57,6 +57,37 @@ func volumeSpec(req *csi.CreateVolumeRequest, defaults Config) (cloud.VolumeSpec
 		SnapshotID:       snapshotSource(req),
 		Metadata:         map[string]string{"csi.driver": defaults.DriverName},
 	}, nil
+}
+
+func selectedZone(req *csi.CreateVolumeRequest, fallback string) string {
+	requirements := req.GetAccessibilityRequirements()
+	requisite := topologyZones(requirements.GetRequisite())
+	for _, topology := range requirements.GetPreferred() {
+		if zone := topology.GetSegments()[TopologyZoneKey]; zone != "" {
+			if len(requisite) > 0 && !slices.Contains(requisite, zone) {
+				continue
+			}
+			return zone
+		}
+	}
+	if len(requisite) > 0 {
+		if fallback != "" && !slices.Contains(requisite, fallback) {
+			return requisite[0]
+		}
+		return requisite[0]
+	}
+	return fallback
+}
+
+func topologyZones(topologies []*csi.Topology) []string {
+	zones := make([]string, 0, len(topologies))
+	for _, topology := range topologies {
+		zone := topology.GetSegments()[TopologyZoneKey]
+		if zone != "" && !slices.Contains(zones, zone) {
+			zones = append(zones, zone)
+		}
+	}
+	return zones
 }
 
 func requestedBytes(capacity *csi.CapacityRange, minimumBytes int64, granularityBytes int64) (int64, error) {
@@ -138,15 +169,4 @@ func volumeContext(volume cloud.Volume) map[string]string {
 		context[contextVolumeType] = volume.Type
 	}
 	return context
-}
-
-func parsePageSize(value string) (int, error) {
-	if value == "" {
-		return 0, nil
-	}
-	size, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("parse page size: %w", err)
-	}
-	return size, nil
 }

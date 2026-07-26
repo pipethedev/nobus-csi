@@ -17,6 +17,7 @@ type Driver struct {
 	cloud  cloud.Cloud
 	mount  mount.Interface
 	locks  *VolumeLocks
+	names  *VolumeLocks
 	log    *slog.Logger
 	ready  bool
 }
@@ -27,6 +28,7 @@ func New(config Config, provider cloud.Cloud, mounter mount.Interface) *Driver {
 		cloud:  provider,
 		mount:  mounter,
 		locks:  NewVolumeLocks(),
+		names:  NewVolumeLocks(),
 		log:    config.Logger,
 		ready:  true,
 	}

@@ -7,6 +7,8 @@ import (
 	"github.com/brimble/nobus-csi/internal/cloud"
 	"github.com/brimble/nobus-csi/internal/mount"
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestNodeGetInfo_EmptyRegion_OmitsRegionTopology(t *testing.T) {
@@ -36,5 +38,42 @@ func TestNodeGetInfo_EmptyRegion_OmitsRegionTopology(t *testing.T) {
 	}
 	if _, ok := segments["topology.csi.nobus.io/region"]; ok {
 		t.Fatalf("expected empty region to be omitted")
+	}
+}
+
+func TestNodeUnstageVolume_MissingVolumeID_ReturnsInvalidArgument(t *testing.T) {
+	driver := newTestDriver()
+	_, err := driver.NodeUnstageVolume(context.Background(), &csi.NodeUnstageVolumeRequest{
+		StagingTargetPath: "/staging",
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %s (%v)", status.Code(err), err)
+	}
+}
+
+func TestNodePublishVolume_BlockModeResolvesDevice(t *testing.T) {
+	mounter := mount.NewFake()
+	driver := New(testConfig(), cloud.NewFake(cloud.InstanceMetadata{InstanceID: "server-1"}), mounter)
+	_, err := driver.NodePublishVolume(context.Background(), &csi.NodePublishVolumeRequest{
+		VolumeId:   "vol-1",
+		TargetPath: "/target/block",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: &csi.VolumeCapability_Block{
+				Block: &csi.VolumeCapability_BlockVolume{},
+			},
+			AccessMode: &csi.VolumeCapability_AccessMode{
+				Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("publish block volume: %v", err)
+	}
+	mounted, err := mounter.IsMounted(context.Background(), "/target/block")
+	if err != nil {
+		t.Fatalf("inspect fake mount: %v", err)
+	}
+	if !mounted {
+		t.Fatalf("expected block target to be mounted")
 	}
 }

@@ -2,6 +2,7 @@ package driver
 
 import (
 	"context"
+	"errors"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -35,17 +36,16 @@ func (d *Driver) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequ
 		return nil, status.Error(codes.InvalidArgument, "snapshot id is required")
 	}
 	if err := d.cloud.DeleteSnapshot(ctx, req.GetSnapshotId()); err != nil {
+		if errors.Is(err, cloud.ErrNotFound) {
+			return &csi.DeleteSnapshotResponse{}, nil
+		}
 		return nil, statusError(err)
 	}
 	return &csi.DeleteSnapshotResponse{}, nil
 }
 
 func (d *Driver) ListSnapshots(ctx context.Context, req *csi.ListSnapshotsRequest) (*csi.ListSnapshotsResponse, error) {
-	size, err := parsePageSize(req.GetStartingToken())
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-	snapshots, token, err := d.cloud.ListSnapshots(ctx, cloud.Page{Token: req.GetStartingToken(), Size: size})
+	snapshots, token, err := d.cloud.ListSnapshots(ctx, cloud.Page{Token: req.GetStartingToken(), Size: int(req.GetMaxEntries())})
 	if err != nil {
 		return nil, statusError(err)
 	}

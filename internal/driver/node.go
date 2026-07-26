@@ -17,6 +17,10 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	if req.GetStagingTargetPath() == "" {
 		return nil, status.Error(codes.InvalidArgument, "staging target path is required")
 	}
+	capability := req.GetVolumeCapability()
+	if capability == nil {
+		return nil, status.Error(codes.InvalidArgument, "volume capability is required")
+	}
 	mounted, err := d.mount.IsMounted(ctx, req.GetStagingTargetPath())
 	if err != nil {
 		return nil, statusError(err)
@@ -27,10 +31,6 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	device, err := d.mount.FindDevice(ctx, req.GetVolumeId(), req.GetPublishContext()["device_path"])
 	if err != nil {
 		return nil, statusError(err)
-	}
-	capability := req.GetVolumeCapability()
-	if capability == nil {
-		return nil, status.Error(codes.InvalidArgument, "volume capability is required")
 	}
 	fsType := defaultFSType
 	flags := []string(nil)
@@ -45,6 +45,9 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 }
 
 func (d *Driver) NodeUnstageVolume(ctx context.Context, req *csi.NodeUnstageVolumeRequest) (*csi.NodeUnstageVolumeResponse, error) {
+	if req.GetVolumeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume id is required")
+	}
 	if req.GetStagingTargetPath() == "" {
 		return nil, status.Error(codes.InvalidArgument, "staging target path is required")
 	}
@@ -79,7 +82,14 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 	}
 	source := req.GetStagingTargetPath()
 	if block {
-		source = req.GetPublishContext()["device_path"]
+		device, err := d.mount.FindDevice(ctx, req.GetVolumeId(), req.GetPublishContext()["device_path"])
+		if err != nil {
+			return nil, statusError(err)
+		}
+		if device == "" {
+			return nil, status.Error(codes.Unavailable, "block device is unavailable")
+		}
+		source = device
 	}
 	if err := d.mount.Publish(ctx, source, req.GetTargetPath(), req.GetReadonly(), block, flags); err != nil {
 		return nil, statusError(err)
@@ -101,7 +111,11 @@ func (d *Driver) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeS
 	if req.GetVolumePath() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume path is required")
 	}
-	stats, err := d.mount.Stats(ctx, req.GetVolumePath(), false)
+	block, err := d.mount.IsBlock(ctx, req.GetVolumePath())
+	if err != nil {
+		return nil, statusError(err)
+	}
+	stats, err := d.mount.Stats(ctx, req.GetVolumePath(), block)
 	if err != nil {
 		return nil, statusError(err)
 	}
@@ -153,10 +167,10 @@ func (d *Driver) NodeGetInfo(ctx context.Context, _ *csi.NodeGetInfoRequest) (*c
 	}
 	segments := map[string]string{}
 	if metadata.AvailabilityZone != "" {
-		segments["topology.csi.nobus.io/zone"] = metadata.AvailabilityZone
+		segments[TopologyZoneKey] = metadata.AvailabilityZone
 	}
 	if metadata.Region != "" {
-		segments["topology.csi.nobus.io/region"] = metadata.Region
+		segments[TopologyRegionKey] = metadata.Region
 	}
 	resp := &csi.NodeGetInfoResponse{NodeId: metadata.InstanceID}
 	if len(segments) > 0 {
