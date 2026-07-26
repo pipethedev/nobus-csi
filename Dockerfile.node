@@ -9,7 +9,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o /out/nobus-csi .
 
 FROM debian:12-slim
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends e2fsprogs xfsprogs util-linux blkid ca-certificates \
+  && apt-get install -y --no-install-recommends e2fsprogs xfsprogs util-linux ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/nobus-csi /nobus-csi
 ENTRYPOINT ["/nobus-csi"]
