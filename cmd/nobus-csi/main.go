@@ -36,7 +36,8 @@ func run(config driver.Config) error {
 	if err != nil {
 		return err
 	}
-	server, err := driver.NewServer(config, provider, mount.NewFake())
+	mounter := mount.New()
+	server, err := driver.NewServer(config, provider, mounter)
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
 	}
