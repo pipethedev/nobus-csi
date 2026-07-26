@@ -7,6 +7,7 @@
 The provider integration is based on the Nobus API docs:
 
 ```text
+https://nobus.io
 https://cloud-api.nobus.io/api/v2/docs
 https://cloud-api.nobus.io/api/v2/openapi.json
 ```
