@@ -123,6 +123,8 @@ Unknown parameters are rejected with `INVALID_ARGUMENT`.
 
 The Nobus OpenAPI currently exposes AZ-scoped list endpoints without server-side page-token or page-size parameters. `ListVolumes` and `ListSnapshots` therefore list the configured `NOBUS_AVAILABILITY_ZONE` and apply CSI pagination locally.
 
+The OpenAPI includes `multiattach` on create-volume, but the live API rejects that field. The driver does not send it during create and still rejects any out-of-band volume that Nobus reports as multiattach.
+
 The OpenAPI does not document conditional volume or snapshot creation by name. After create, the driver re-lists the requested name in the target AZ, waits for the lowest compatible provider ID to stay stable, returns that canonical ID, and removes visible compatible duplicates when they are safe to delete. This is best-effort reconciliation, not a replacement for provider-enforced unique names.
 
 CSI snapshot IDs returned by this driver are `availability-zone/provider-snapshot-id` so `DeleteSnapshot` can call the Nobus AZ-scoped delete endpoint later. Registered pre-existing snapshots may still use the raw provider snapshot ID, in which case delete falls back to `NOBUS_AVAILABILITY_ZONE`.

@@ -28,9 +28,6 @@ func TestClient_CreateVolume_UsesDocumentedEndpointAndAuth(t *testing.T) {
 		if body.Size != 2 || body.ProjectID != "project" || body.AvailabilityZone != "az1" {
 			t.Fatalf("unexpected request body: %+v", body)
 		}
-		if body.Multiattach {
-			t.Fatalf("expected multiattach=false")
-		}
 		return jsonOK(t, &volumeResponse{
 			Status: true,
 			Data: apiVolume{

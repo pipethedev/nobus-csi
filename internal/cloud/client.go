@@ -75,7 +75,6 @@ func (c *Client) CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, er
 		SnapshotID:       spec.SnapshotID,
 		Metadata:         spec.Metadata,
 		ProjectID:        spec.ProjectID,
-		Multiattach:      false,
 	})
 	if err != nil {
 		return nil, err
@@ -553,7 +552,6 @@ type volumeCreateRequest struct {
 	SnapshotID       string            `json:"snapshot_id,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	ProjectID        string            `json:"project_id"`
-	Multiattach      bool              `json:"multiattach"`
 }
 
 func (volumeCreateRequest) request() {}
