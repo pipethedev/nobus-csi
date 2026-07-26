@@ -283,6 +283,21 @@ func TestCreateVolume_DualControllerDuplicateCreate_ReturnsCanonicalAndDeletesOr
 	}
 }
 
+func TestCreateVolume_StaggeredDuplicateVisibility_ReturnsStableCanonical(t *testing.T) {
+	provider := newStaggeredCreateCloud()
+	driver := New(testConfig(), provider, mount.NewFake())
+	resp, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if resp.GetVolume().GetVolumeId() != "vol-1" {
+		t.Fatalf("expected stable canonical vol-1, got %q", resp.GetVolume().GetVolumeId())
+	}
+	if !provider.deleted("vol-2") {
+		t.Fatalf("expected staggered duplicate vol-2 to be deleted")
+	}
+}
+
 func TestControllerUnpublishVolume_UsesProviderVolumeZone(t *testing.T) {
 	driver := newTestDriver()
 	req := createVolumeRequest(testGiB)
@@ -440,6 +455,20 @@ func TestDeleteSnapshot_EncodedZoneDeletesWithSnapshotZone(t *testing.T) {
 	}
 }
 
+func TestCreateSnapshot_EncodesRequestZoneWhenProviderOmitsZone(t *testing.T) {
+	driver := New(testConfig(), newSnapshotNoAZCloud(), mount.NewFake())
+	resp, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: "vol-1",
+	})
+	if err != nil {
+		t.Fatalf("create snapshot: %v", err)
+	}
+	if resp.GetSnapshot().GetSnapshotId() != "az2/snap-1" {
+		t.Fatalf("expected zone-encoded snapshot id, got %q", resp.GetSnapshot().GetSnapshotId())
+	}
+}
+
 func newTestDriver() *Driver {
 	config := testConfig()
 	provider := cloud.NewFake(cloud.InstanceMetadata{
@@ -555,6 +584,11 @@ func (d *dualCreateCloud) CreateVolume(_ context.Context, spec cloud.VolumeSpec)
 }
 
 func (d *dualCreateCloud) ListVolumes(_ context.Context, page cloud.Page) ([]cloud.Volume, string, error) {
+	select {
+	case <-d.released:
+	default:
+		return nil, "", nil
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	volumes := make([]cloud.Volume, 0, len(d.volumes))
@@ -592,4 +626,100 @@ func (d *dualCreateCloud) deleted(id string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return slices.Contains(d.deletedIDs, id)
+}
+
+type staggeredCreateCloud struct {
+	cloud.Cloud
+	mu         sync.Mutex
+	listCalls  int
+	deletedIDs []string
+}
+
+func newStaggeredCreateCloud() *staggeredCreateCloud {
+	return &staggeredCreateCloud{}
+}
+
+func (s *staggeredCreateCloud) ListVolumes(context.Context, cloud.Page) ([]cloud.Volume, string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.listCalls++
+	created := cloud.Volume{
+		ID:               "vol-2",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}
+	canonical := cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}
+	if s.listCalls == 1 {
+		return nil, "", nil
+	}
+	if s.listCalls == 2 {
+		return []cloud.Volume{created}, "", nil
+	}
+	return []cloud.Volume{created, canonical}, "", nil
+}
+
+func (s *staggeredCreateCloud) CreateVolume(context.Context, cloud.VolumeSpec) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-2",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+func (s *staggeredCreateCloud) DeleteVolume(_ context.Context, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deletedIDs = append(s.deletedIDs, id)
+	return nil
+}
+
+func (s *staggeredCreateCloud) deleted(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Contains(s.deletedIDs, id)
+}
+
+type snapshotNoAZCloud struct {
+	cloud.Cloud
+	created bool
+}
+
+func newSnapshotNoAZCloud() *snapshotNoAZCloud {
+	return &snapshotNoAZCloud{}
+}
+
+func (s *snapshotNoAZCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az2",
+	}, nil
+}
+
+func (s *snapshotNoAZCloud) ListSnapshots(context.Context, cloud.Page) ([]cloud.Snapshot, string, error) {
+	if !s.created {
+		return nil, "", nil
+	}
+	return []cloud.Snapshot{
+		{ID: "snap-1", Name: "backup", VolumeID: "vol-1", SizeBytes: testGiB, Status: cloud.SnapshotStatusAvailable},
+	}, "", nil
+}
+
+func (s *snapshotNoAZCloud) CreateSnapshot(context.Context, cloud.SnapshotSpec) (*cloud.Snapshot, error) {
+	s.created = true
+	return &cloud.Snapshot{
+		ID:        "snap-1",
+		Name:      "backup",
+		VolumeID:  "vol-1",
+		SizeBytes: testGiB,
+		Status:    cloud.SnapshotStatusAvailable,
+	}, nil
 }

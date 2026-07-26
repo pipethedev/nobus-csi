@@ -66,6 +66,10 @@ Unknown parameters are rejected with `INVALID_ARGUMENT`.
 
 The Nobus OpenAPI currently exposes AZ-scoped list endpoints without server-side page-token or page-size parameters. `ListVolumes` and `ListSnapshots` therefore list the configured `NOBUS_AVAILABILITY_ZONE` and apply CSI pagination locally.
 
+The OpenAPI does not document conditional volume or snapshot creation by name. After create, the driver re-lists the requested name in the target AZ, returns the lowest compatible provider ID, and deletes only the duplicate object created by the current request if it loses that canonical selection.
+
+CSI snapshot IDs returned by this driver are `availability-zone/provider-snapshot-id` so `DeleteSnapshot` can call the Nobus AZ-scoped delete endpoint later. Registered pre-existing snapshots may still use the raw provider snapshot ID, in which case delete falls back to `NOBUS_AVAILABILITY_ZONE`.
+
 ## Node Identity
 
 The Nobus OpenAPI schema documents block storage APIs but not an instance metadata API. The node plugin reads provider metadata from cloud-init ConfigDrive data at `/run/cloud-init/instance-data.json` or `/var/lib/cloud/instance/instance-data.json`. If neither file has an instance ID, `NodeGetInfo` fails instead of serving a bogus node ID.

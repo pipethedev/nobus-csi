@@ -3,6 +3,7 @@ package driver
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
@@ -45,7 +46,11 @@ func (d *Driver) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequ
 	if err != nil {
 		return nil, statusError(err)
 	}
-	return &csi.CreateSnapshotResponse{Snapshot: csiSnapshot(*snapshot)}, nil
+	reconciled, err := d.reconcileCreatedSnapshot(ctx, req.GetName(), req.GetSourceVolumeId(), zone, snapshot.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &csi.CreateSnapshotResponse{Snapshot: csiSnapshot(*reconciled)}, nil
 }
 
 func (d *Driver) DeleteSnapshot(ctx context.Context, req *csi.DeleteSnapshotRequest) (*csi.DeleteSnapshotResponse, error) {
@@ -81,11 +86,82 @@ func (d *Driver) snapshotByName(ctx context.Context, name string, availabilityZo
 	}
 	for _, snapshot := range snapshots {
 		if snapshot.Name == name {
+			if snapshot.AvailabilityZone == "" {
+				snapshot.AvailabilityZone = availabilityZone
+			}
 			clone := snapshot
 			return &clone, nil
 		}
 	}
 	return nil, cloud.ErrNotFound
+}
+
+func (d *Driver) reconcileCreatedSnapshot(ctx context.Context, name string, sourceVolumeID string, availabilityZone string, createdID string) (*cloud.Snapshot, error) {
+	var previous string
+	stable := 0
+	delay := createReconcileInitialDelay
+	for range createReconcileAttempts {
+		canonical, err := d.reconcileSnapshotByName(ctx, name, sourceVolumeID, availabilityZone, createdID)
+		if err != nil {
+			return nil, err
+		}
+		if canonical.ID == previous {
+			stable++
+		} else {
+			previous = canonical.ID
+			stable = 1
+		}
+		if stable >= createReconcileStableSamples {
+			return canonical, nil
+		}
+		if err := wait(ctx, delay); err != nil {
+			return nil, statusError(err)
+		}
+		delay *= 2
+	}
+	return d.reconcileSnapshotByName(ctx, name, sourceVolumeID, availabilityZone, createdID)
+}
+
+func (d *Driver) reconcileSnapshotByName(ctx context.Context, name string, sourceVolumeID string, availabilityZone string, createdID string) (*cloud.Snapshot, error) {
+	snapshots, _, err := d.cloud.ListSnapshots(ctx, cloud.Page{Name: name, AvailabilityZone: availabilityZone})
+	if err != nil {
+		return nil, statusError(err)
+	}
+	compatible := make([]cloud.Snapshot, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if snapshot.Name != name {
+			continue
+		}
+		if snapshot.VolumeID != sourceVolumeID {
+			return nil, status.Error(codes.AlreadyExists, "snapshot name exists for a different source volume")
+		}
+		if snapshot.AvailabilityZone == "" {
+			snapshot.AvailabilityZone = availabilityZone
+		}
+		compatible = append(compatible, snapshot)
+	}
+	if len(compatible) == 0 {
+		return nil, cloud.ErrNotFound
+	}
+	slices.SortFunc(compatible, func(left cloud.Snapshot, right cloud.Snapshot) int {
+		if left.ID < right.ID {
+			return -1
+		}
+		if left.ID > right.ID {
+			return 1
+		}
+		return 0
+	})
+	canonical := compatible[0]
+	for _, duplicate := range compatible[1:] {
+		if duplicate.ID != createdID {
+			continue
+		}
+		if err := d.cloud.DeleteSnapshot(ctx, duplicate.ID, availabilityZone); err != nil && !errors.Is(err, cloud.ErrNotFound) {
+			return nil, statusError(err)
+		}
+	}
+	return &canonical, nil
 }
 
 func csiSnapshot(snapshot cloud.Snapshot) *csi.Snapshot {

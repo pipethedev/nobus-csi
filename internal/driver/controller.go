@@ -4,11 +4,18 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+)
+
+const (
+	createReconcileAttempts      = 6
+	createReconcileInitialDelay  = 10 * time.Millisecond
+	createReconcileStableSamples = 2
 )
 
 func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
@@ -24,30 +31,24 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		return nil, status.Error(codes.Aborted, "another create operation is in flight for this volume name")
 	}
 	defer unlock()
-	existing, err := d.cloud.GetVolumeByName(ctx, req.GetName(), spec.AvailabilityZone)
+	existing, err := d.reconcileVolumeByName(ctx, spec, "")
 	if err == nil {
-		if !compatibleVolume(*existing, spec) {
-			return nil, status.Error(codes.AlreadyExists, "volume name exists with different parameters")
-		}
 		return &csi.CreateVolumeResponse{Volume: csiVolume(*existing)}, nil
 	}
 	if !errors.Is(err, cloud.ErrNotFound) {
-		return nil, statusError(err)
+		return nil, err
 	}
 	volume, err := d.cloud.CreateVolume(ctx, spec)
 	if err != nil {
 		if errors.Is(err, cloud.ErrAlreadyExists) {
-			reconciled, getErr := d.cloud.GetVolumeByName(ctx, req.GetName(), spec.AvailabilityZone)
+			reconciled, getErr := d.reconcileVolumeByName(ctx, spec, "")
 			if getErr == nil {
-				if !compatibleVolume(*reconciled, spec) {
-					return nil, status.Error(codes.AlreadyExists, "volume name exists with different parameters")
-				}
 				return &csi.CreateVolumeResponse{Volume: csiVolume(*reconciled)}, nil
 			}
 		}
 		return nil, statusError(err)
 	}
-	reconciled, err := d.reconcileCreatedVolume(ctx, spec, *volume)
+	reconciled, err := d.reconcileCreatedVolume(ctx, spec, volume.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -124,19 +125,49 @@ func compatibleVolume(volume cloud.Volume, spec cloud.VolumeSpec) bool {
 	return volume.SizeBytes == spec.SizeBytes && volume.AvailabilityZone == spec.AvailabilityZone && volume.Type == spec.Type
 }
 
-func (d *Driver) reconcileCreatedVolume(ctx context.Context, spec cloud.VolumeSpec, created cloud.Volume) (*cloud.Volume, error) {
+func (d *Driver) reconcileCreatedVolume(ctx context.Context, spec cloud.VolumeSpec, createdID string) (*cloud.Volume, error) {
+	var previous string
+	stable := 0
+	delay := createReconcileInitialDelay
+	for range createReconcileAttempts {
+		canonical, err := d.reconcileVolumeByName(ctx, spec, createdID)
+		if err != nil {
+			return nil, err
+		}
+		if canonical.ID == previous {
+			stable++
+		} else {
+			previous = canonical.ID
+			stable = 1
+		}
+		if stable >= createReconcileStableSamples {
+			return canonical, nil
+		}
+		if err := wait(ctx, delay); err != nil {
+			return nil, statusError(err)
+		}
+		delay *= 2
+	}
+	return d.reconcileVolumeByName(ctx, spec, createdID)
+}
+
+func (d *Driver) reconcileVolumeByName(ctx context.Context, spec cloud.VolumeSpec, createdID string) (*cloud.Volume, error) {
 	volumes, _, err := d.cloud.ListVolumes(ctx, cloud.Page{Name: spec.Name, AvailabilityZone: spec.AvailabilityZone})
 	if err != nil {
 		return nil, statusError(err)
 	}
 	compatible := make([]cloud.Volume, 0, len(volumes))
 	for _, volume := range volumes {
-		if volume.Name == spec.Name && compatibleVolume(volume, spec) {
-			compatible = append(compatible, volume)
+		if volume.Name != spec.Name {
+			continue
 		}
+		if !compatibleVolume(volume, spec) {
+			return nil, status.Error(codes.AlreadyExists, "volume name exists with different parameters")
+		}
+		compatible = append(compatible, volume)
 	}
 	if len(compatible) == 0 {
-		return &created, nil
+		return nil, cloud.ErrNotFound
 	}
 	slices.SortFunc(compatible, func(left cloud.Volume, right cloud.Volume) int {
 		if left.ID < right.ID {
@@ -148,12 +179,26 @@ func (d *Driver) reconcileCreatedVolume(ctx context.Context, spec cloud.VolumeSp
 		return 0
 	})
 	canonical := compatible[0]
-	if created.ID != canonical.ID {
-		if err := d.cloud.DeleteVolume(ctx, created.ID); err != nil && !errors.Is(err, cloud.ErrNotFound) {
+	for _, duplicate := range compatible[1:] {
+		if createdID != "" && duplicate.ID != createdID {
+			continue
+		}
+		if err := d.cloud.DeleteVolume(ctx, duplicate.ID); err != nil && !errors.Is(err, cloud.ErrNotFound) {
 			return nil, statusError(err)
 		}
 	}
 	return &canonical, nil
+}
+
+func wait(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return cloud.ErrUnavailable
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (d *Driver) ControllerUnpublishVolume(ctx context.Context, req *csi.ControllerUnpublishVolumeRequest) (*csi.ControllerUnpublishVolumeResponse, error) {
