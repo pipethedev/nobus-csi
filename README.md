@@ -91,6 +91,23 @@ kubectl apply -k deploy/kubernetes
 
 Create the `nobus-csi` Secret with `NOBUS_EMAIL` and `NOBUS_PASSWORD`, or with `NOBUS_TOKEN` if you want to inject a pre-issued bearer token.
 
+The Helm chart is under `deploy/helm/nobus-csi`:
+
+```sh
+kubectl -n kube-system create secret generic nobus-csi \
+  --from-literal=NOBUS_API_URL=https://cloud-api.nobus.io \
+  --from-literal=NOBUS_PROJECT_ID="$NOBUS_PROJECT_ID" \
+  --from-literal=NOBUS_AVAILABILITY_ZONE="$NOBUS_AVAILABILITY_ZONE" \
+  --from-literal=NOBUS_EMAIL="$NOBUS_EMAIL" \
+  --from-literal=NOBUS_PASSWORD="$NOBUS_PASSWORD"
+
+helm install nobus-csi deploy/helm/nobus-csi \
+  --namespace kube-system \
+  --set nobus.existingSecret=nobus-csi \
+  --set nobus.projectId="$NOBUS_PROJECT_ID" \
+  --set nobus.availabilityZone="$NOBUS_AVAILABILITY_ZONE"
+```
+
 ## Supported Parameters
 
 | Key | Type | Default | Mutable | Description |

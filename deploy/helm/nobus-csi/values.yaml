@@ -1,0 +1,106 @@
+nameOverride: ""
+fullnameOverride: ""
+namespaceOverride: ""
+
+driver:
+  name: csi.nobus.io
+  version: "0.1.0"
+
+image:
+  repository: ghcr.io/pipethedev/nobus-csi
+  pullPolicy: IfNotPresent
+  controllerTag: latest-controller
+  nodeTag: latest-node
+
+imagePullSecrets: []
+
+nobus:
+  apiUrl: https://cloud-api.nobus.io
+  projectId: ""
+  availabilityZone: ""
+  volumeType: ""
+  token: ""
+  email: ""
+  password: ""
+  existingSecret: ""
+  secretName: ""
+
+controller:
+  replicas: 2
+  priorityClassName: ""
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: controller
+            topologyKey: kubernetes.io/hostname
+  resources: {}
+
+node:
+  priorityClassName: ""
+  nodeSelector: {}
+  tolerations: []
+  resources: {}
+  kubeletRootDir: /var/lib/kubelet
+  registrarDir: /var/lib/kubelet/plugins_registry
+  pluginDir: /var/lib/kubelet/plugins/csi.nobus.io
+
+sidecars:
+  provisioner:
+    image: registry.k8s.io/sig-storage/csi-provisioner:v5.0.1
+    args: []
+  attacher:
+    image: registry.k8s.io/sig-storage/csi-attacher:v4.6.1
+    args: []
+  resizer:
+    image: registry.k8s.io/sig-storage/csi-resizer:v1.11.1
+    args: []
+  snapshotter:
+    image: registry.k8s.io/sig-storage/csi-snapshotter:v8.0.1
+    args: []
+  registrar:
+    image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.11.1
+    args: []
+  livenessProbe:
+    image: registry.k8s.io/sig-storage/livenessprobe:v2.13.1
+    args: []
+
+csiDriver:
+  attachRequired: true
+  podInfoOnMount: false
+  fsGroupPolicy: None
+  storageCapacity: false
+
+rbac:
+  create: true
+
+serviceAccount:
+  controller:
+    create: true
+    name: ""
+    annotations: {}
+  node:
+    create: true
+    name: ""
+    annotations: {}
+
+storageClass:
+  create: true
+  name: nobus
+  annotations: {}
+  reclaimPolicy: Delete
+  allowVolumeExpansion: true
+  volumeBindingMode: WaitForFirstConsumer
+  parameters: {}
+
+volumeSnapshotClass:
+  create: true
+  name: nobus
+  annotations: {}
+  deletionPolicy: Delete
+  parameters: {}
