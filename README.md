@@ -22,7 +22,9 @@ GOOS=linux GOARCH=amd64 go build -o nobus-csi ./cmd/nobus-csi
 |---|---:|---|---|
 | `CSI_ENDPOINT` | no | `unix:///csi/csi.sock` | CSI unix socket endpoint. `tcp://` is rejected. |
 | `NOBUS_API_URL` | yes for real provider | none | Nobus API base URL, for example `https://cloud-api.nobus.io`. |
-| `NOBUS_TOKEN` | yes for real provider | none | Nobus bearer token. Never put this directly in jobspecs or manifests. |
+| `NOBUS_TOKEN` | no | none | Nobus bearer token from `/api/v2/auth/login`, not an API key. When set, it is used directly and login is skipped until a 401 response triggers refresh if email/password are also set. |
+| `NOBUS_EMAIL` | yes if `NOBUS_TOKEN` is empty | none | Nobus login email. |
+| `NOBUS_PASSWORD` | yes if `NOBUS_TOKEN` is empty | none | Nobus login password. |
 | `NOBUS_PROJECT_ID` | yes | none | Nobus project ID used for volume APIs. |
 | `NOBUS_AVAILABILITY_ZONE` | yes | none | Nobus availability zone used for volume APIs. |
 | `NOBUS_VOLUME_TYPE` | no | none | Default Nobus volume type. |
@@ -41,7 +43,7 @@ nomad volume create deploy/nomad/example-volume.hcl
 nomad volume register deploy/nomad/register-volume.hcl
 ```
 
-Use `stage_publish_base_dir` with a non-default path in tests. For single-writer volumes, avoid rolling update settings that force a new allocation to claim the same volume before the old allocation releases it.
+Store `email` and `password` in `nomad var put nobus/csi`. You can also store `token` there if you prefer to inject a pre-issued bearer token. Use `stage_publish_base_dir` with a non-default path in tests. For single-writer volumes, avoid rolling update settings that force a new allocation to claim the same volume before the old allocation releases it.
 
 ## Kubernetes
 
@@ -50,6 +52,8 @@ The Kubernetes manifests are under `deploy/kubernetes`. They use CSI sidecars, b
 ```sh
 kubectl apply -k deploy/kubernetes
 ```
+
+Create the `nobus-csi` Secret with `NOBUS_EMAIL` and `NOBUS_PASSWORD`, or with `NOBUS_TOKEN` if you want to inject a pre-issued bearer token.
 
 ## Supported Parameters
 

@@ -57,6 +57,148 @@ func TestClient_CreateVolume_UsesDocumentedEndpointAndAuth(t *testing.T) {
 	}
 }
 
+func TestClient_LoginWithEmailPassword_UsesReturnedBearerToken(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if r.URL.Path != loginPath {
+				t.Fatalf("expected path %s, got %s", loginPath, r.URL.Path)
+			}
+			if r.Header.Get("Authorization") != "" {
+				t.Fatalf("expected login without authorization header")
+			}
+			var body loginRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode login request: %v", err)
+			}
+			if body.Email != "hello@brimble.app" || body.Password != "secret" {
+				t.Fatalf("unexpected login body: %+v", body)
+			}
+			return responseWithRawBody(t, http.StatusOK, `{"token":"login-token"}`), nil
+		case 2:
+			if r.URL.Path != volumePath {
+				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			}
+			if r.Header.Get("Authorization") != "Bearer login-token" {
+				t.Fatalf("expected login bearer auth, got %q", r.Header.Get("Authorization"))
+			}
+			return jsonOK(t, &genericVolumeResponse{
+				Status: true,
+				Data: rawVolumeJSON(t, apiVolume{
+					ID:   "vol-1",
+					Size: 1,
+				}),
+			}), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+	client, err := NewClient(ClientConfig{
+		BaseURL:          "https://cloud-api.nobus.io",
+		Email:            "hello@brimble.app",
+		Password:         "secret",
+		ProjectID:        "project",
+		AvailabilityZone: "az1",
+		HTTPClient:       &http.Client{Transport: transport},
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if _, err := client.GetVolumeByID(context.Background(), "vol-1"); err != nil {
+		t.Fatalf("get volume: %v", err)
+	}
+}
+
+func TestClient_TokenSkipsLogin(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path == loginPath {
+			t.Fatalf("did not expect login request")
+		}
+		if r.Header.Get("Authorization") != "Bearer provided-token" {
+			t.Fatalf("expected provided bearer auth, got %q", r.Header.Get("Authorization"))
+		}
+		return jsonOK(t, &genericVolumeResponse{
+			Status: true,
+			Data: rawVolumeJSON(t, apiVolume{
+				ID:   "vol-1",
+				Size: 1,
+			}),
+		}), nil
+	})
+	client, err := NewClient(ClientConfig{
+		BaseURL:          "https://cloud-api.nobus.io",
+		Token:            "provided-token",
+		Email:            "hello@brimble.app",
+		Password:         "secret",
+		ProjectID:        "project",
+		AvailabilityZone: "az1",
+		HTTPClient:       &http.Client{Transport: transport},
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if _, err := client.GetVolumeByID(context.Background(), "vol-1"); err != nil {
+		t.Fatalf("get volume: %v", err)
+	}
+}
+
+func TestClient_UnauthorizedRefreshesLoginToken(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if r.URL.Path != volumePath {
+				t.Fatalf("expected volume request, got %s", r.URL.Path)
+			}
+			if r.Header.Get("Authorization") != "Bearer expired-token" {
+				t.Fatalf("expected expired bearer auth, got %q", r.Header.Get("Authorization"))
+			}
+			return jsonErrorResponse(t, http.StatusUnauthorized, errorResponse{Message: "token expired"}), nil
+		case 2:
+			if r.URL.Path != loginPath {
+				t.Fatalf("expected login request, got %s", r.URL.Path)
+			}
+			return responseWithRawBody(t, http.StatusOK, `{"token":"fresh-token"}`), nil
+		case 3:
+			if r.URL.Path != volumePath {
+				t.Fatalf("expected retried volume request, got %s", r.URL.Path)
+			}
+			if r.Header.Get("Authorization") != "Bearer fresh-token" {
+				t.Fatalf("expected fresh bearer auth, got %q", r.Header.Get("Authorization"))
+			}
+			return jsonOK(t, &genericVolumeResponse{
+				Status: true,
+				Data: rawVolumeJSON(t, apiVolume{
+					ID:   "vol-1",
+					Size: 1,
+				}),
+			}), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+	client, err := NewClient(ClientConfig{
+		BaseURL:          "https://cloud-api.nobus.io",
+		Token:            "expired-token",
+		Email:            "hello@brimble.app",
+		Password:         "secret",
+		ProjectID:        "project",
+		AvailabilityZone: "az1",
+		HTTPClient:       &http.Client{Transport: transport},
+	})
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	if _, err := client.GetVolumeByID(context.Background(), "vol-1"); err != nil {
+		t.Fatalf("get volume: %v", err)
+	}
+}
+
 func TestClient_GetVolumeByName_MissingReturnsNotFound(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL.Path != volumeListPath {
@@ -422,6 +564,15 @@ func responseWithBody(t *testing.T, status int, value responsePayload) *http.Res
 	return &http.Response{
 		StatusCode: status,
 		Body:       io.NopCloser(bytes.NewReader(data)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+}
+
+func responseWithRawBody(t *testing.T, status int, value string) *http.Response {
+	t.Helper()
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(bytes.NewReader([]byte(value))),
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 	}
 }

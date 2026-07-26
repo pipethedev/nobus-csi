@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/brimble/nobus-csi/internal/metadata"
@@ -23,12 +24,14 @@ const (
 	volumeExtendPath = "/api/v2/volume/extend"
 	snapshotPath     = "/api/v2/volume/snapshot"
 	snapshotListPath = "/api/v2/volume/snapshot/list"
+	loginPath        = "/api/v2/auth/login"
 	bytesPerGiB      = int64(1 << 30)
 	defaultTimeout   = 30 * time.Second
 )
 
 type Client struct {
 	base   *url.URL
+	mu     sync.Mutex
 	token  string
 	http   *http.Client
 	config ClientConfig
@@ -37,6 +40,8 @@ type Client struct {
 type ClientConfig struct {
 	BaseURL          string
 	Token            string
+	Email            string
+	Password         string
 	ProjectID        string
 	AvailabilityZone string
 	HTTPClient       *http.Client
@@ -50,8 +55,8 @@ func NewClient(config ClientConfig) (*Client, error) {
 	if base.Scheme == "" || base.Host == "" {
 		return nil, fmt.Errorf("nobus API URL must be absolute")
 	}
-	if config.Token == "" {
-		return nil, fmt.Errorf("nobus token is required")
+	if config.Token == "" && (config.Email == "" || config.Password == "") {
+		return nil, fmt.Errorf("nobus token or email and password are required")
 	}
 	client := config.HTTPClient
 	if client == nil {
@@ -280,30 +285,100 @@ func (c *Client) do(ctx context.Context, method string, path string, query url.V
 	if query != nil {
 		endpoint.RawQuery = query.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), bytes.NewReader(body))
+	for attempt := 0; attempt < 2; attempt++ {
+		token, err := c.bearerToken(ctx)
+		if err != nil {
+			return err
+		}
+		req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create Nobus request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		if len(body) > 0 {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return fmt.Errorf("call Nobus API: %w", ErrUnavailable)
+		}
+		defer closeBody(resp.Body)
+		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 && c.canLogin() {
+			c.clearToken(token)
+			continue
+		}
+		if resp.StatusCode >= http.StatusBadRequest {
+			return mapHTTPError(resp)
+		}
+		if decode == nil {
+			_, err := io.Copy(io.Discard, resp.Body)
+			if err != nil {
+				return fmt.Errorf("drain Nobus response: %w", err)
+			}
+			return nil
+		}
+		err = decode(resp.Body)
+		return err
+	}
+	return fmt.Errorf("refresh Nobus token: %w", ErrUnauthorized)
+}
+
+func (c *Client) bearerToken(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token != "" {
+		return c.token, nil
+	}
+	token, err := c.login(ctx)
 	if err != nil {
-		return fmt.Errorf("create Nobus request: %w", err)
+		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	if len(body) > 0 {
-		req.Header.Set("Content-Type", "application/json")
+	c.token = token
+	return token, nil
+}
+
+func (c *Client) clearToken(value string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.token == value {
+		c.token = ""
 	}
+}
+
+func (c *Client) canLogin() bool {
+	return c.config.Email != "" && c.config.Password != ""
+}
+
+func (c *Client) login(ctx context.Context) (string, error) {
+	payload, err := encodeBody(loginRequest{
+		Email:    c.config.Email,
+		Password: c.config.Password,
+	})
+	if err != nil {
+		return "", err
+	}
+	endpoint := c.base.ResolveReference(&url.URL{Path: loginPath})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("create Nobus login request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("call Nobus API: %w", ErrUnavailable)
+		return "", fmt.Errorf("call Nobus login API: %w", ErrUnavailable)
 	}
 	defer closeBody(resp.Body)
 	if resp.StatusCode >= http.StatusBadRequest {
-		return mapHTTPError(resp)
+		return "", mapHTTPError(resp)
 	}
-	if decode == nil {
-		_, err := io.Copy(io.Discard, resp.Body)
-		if err != nil {
-			return fmt.Errorf("drain Nobus response: %w", err)
-		}
-		return nil
+	var response loginResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return "", fmt.Errorf("decode Nobus login response: %w", err)
 	}
-	return decode(resp.Body)
+	if response.Token == "" {
+		return "", fmt.Errorf("nobus login response missing token: %w", ErrUnauthorized)
+	}
+	return response.Token, nil
 }
 
 func closeBody(body io.Closer) {
@@ -505,6 +580,13 @@ type snapshotRequest struct {
 
 func (snapshotRequest) request() {}
 
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func (loginRequest) request() {}
+
 type requestBody interface {
 	request()
 }
@@ -554,6 +636,10 @@ func (*snapshotListResponse) response() {}
 
 type errorResponse struct {
 	Message string `json:"message"`
+}
+
+type loginResponse struct {
+	Token string `json:"token"`
 }
 
 type apiVolume struct {

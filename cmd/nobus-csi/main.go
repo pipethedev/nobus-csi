@@ -45,10 +45,12 @@ func run(config driver.Config) error {
 }
 
 func providerFromConfig(config driver.Config) (cloud.Cloud, error) {
-	if config.APIURL != "" || config.Token != "" {
+	if config.APIURL != "" || config.Token != "" || config.Email != "" || config.Password != "" {
 		return cloud.NewClient(cloud.ClientConfig{
 			BaseURL:          config.APIURL,
 			Token:            config.Token,
+			Email:            config.Email,
+			Password:         config.Password,
 			ProjectID:        config.ProjectID,
 			AvailabilityZone: config.AvailabilityZone,
 		})

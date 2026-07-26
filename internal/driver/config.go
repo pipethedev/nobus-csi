@@ -30,6 +30,8 @@ type Config struct {
 	Mode                   Mode
 	APIURL                 string
 	Token                  string
+	Email                  string
+	Password               string
 	ProjectID              string
 	AvailabilityZone       string
 	VolumeType             string
@@ -51,6 +53,8 @@ func ConfigFromEnv() Config {
 		Mode:                   ModeAll,
 		APIURL:                 os.Getenv("NOBUS_API_URL"),
 		Token:                  os.Getenv("NOBUS_TOKEN"),
+		Email:                  os.Getenv("NOBUS_EMAIL"),
+		Password:               os.Getenv("NOBUS_PASSWORD"),
 		ProjectID:              os.Getenv("NOBUS_PROJECT_ID"),
 		AvailabilityZone:       os.Getenv("NOBUS_AVAILABILITY_ZONE"),
 		VolumeType:             os.Getenv("NOBUS_VOLUME_TYPE"),
