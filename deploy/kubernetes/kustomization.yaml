@@ -1,0 +1,6 @@
+resources:
+  - controller.yaml
+  - node.yaml
+  - rbac.yaml
+  - storageclass.yaml
+  - volumesnapshotclass.yaml

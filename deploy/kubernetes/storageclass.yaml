@@ -1,0 +1,14 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nobus
+provisioner: csi.nobus.io
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  project_id: replace-me
+  availability_zone: replace-me
+  csi.storage.k8s.io/provisioner-secret-name: nobus-csi
+  csi.storage.k8s.io/provisioner-secret-namespace: kube-system
+  csi.storage.k8s.io/controller-publish-secret-name: nobus-csi
+  csi.storage.k8s.io/controller-publish-secret-namespace: kube-system
