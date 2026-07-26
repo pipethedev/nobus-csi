@@ -61,6 +61,6 @@ kubectl apply -k deploy/kubernetes
 
 Unknown parameters are rejected with `INVALID_ARGUMENT`.
 
-## Current Provider Gap
+## Node Identity
 
-The Nobus OpenAPI schema documents block storage APIs, but it does not expose a verified instance metadata endpoint. Node identity must eventually come from Nobus provider metadata; until that endpoint is confirmed, real node-mode startup should be treated as incomplete.
+The Nobus OpenAPI schema documents block storage APIs but not an instance metadata API. The node plugin reads provider metadata from cloud-init ConfigDrive data at `/run/cloud-init/instance-data.json` or `/var/lib/cloud/instance/instance-data.json`. If neither file has an instance ID, `NodeGetInfo` fails instead of serving a bogus node ID.

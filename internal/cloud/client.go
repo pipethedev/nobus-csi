@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/brimble/nobus-csi/internal/metadata"
 )
 
 const (
@@ -220,8 +222,16 @@ func (c *Client) ListSnapshots(ctx context.Context, _ Page) ([]Snapshot, string,
 	return snapshots, "", nil
 }
 
-func (c *Client) GetInstanceMetadata(context.Context) (*InstanceMetadata, error) {
-	return nil, fmt.Errorf("nobus instance metadata endpoint is unverified: %w", ErrUnavailable)
+func (c *Client) GetInstanceMetadata(ctx context.Context) (*InstanceMetadata, error) {
+	instance, err := metadata.ReadCloudInit(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read Nobus instance metadata: %w: %w", err, ErrUnavailable)
+	}
+	return &InstanceMetadata{
+		InstanceID:       instance.ID,
+		AvailabilityZone: instance.AvailabilityZone,
+		Region:           instance.Region,
+	}, nil
 }
 
 func (c *Client) do(ctx context.Context, method string, path string, query url.Values, body []byte, decode func(io.Reader) error) error {
