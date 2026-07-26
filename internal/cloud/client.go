@@ -83,7 +83,9 @@ func (c *Client) CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, er
 	if err != nil {
 		return nil, err
 	}
-	return response.Data.toDomain(), nil
+	volume := response.Data.toDomain()
+	volume.AvailabilityZone = spec.AvailabilityZone
+	return volume, nil
 }
 
 func (c *Client) GetVolumeByID(ctx context.Context, id string) (*Volume, error) {
@@ -93,8 +95,9 @@ func (c *Client) GetVolumeByID(ctx context.Context, id string) (*Volume, error) 
 func (c *Client) getVolumeByIDInZone(ctx context.Context, id string, availabilityZone string) (*Volume, error) {
 	query := c.baseQuery()
 	query.Set("volume_id", id)
-	if availabilityZone != "" {
-		query.Set("availability_zone", availabilityZone)
+	zone := firstValue(availabilityZone, c.config.AvailabilityZone)
+	if zone != "" {
+		query.Set("availability_zone", zone)
 	}
 	var response genericVolumeResponse
 	if err := c.do(ctx, http.MethodGet, volumePath, query, nil, decodeJSON(&response)); err != nil {
@@ -104,7 +107,11 @@ func (c *Client) getVolumeByIDInZone(ctx context.Context, id string, availabilit
 	if err != nil {
 		return nil, err
 	}
-	return volume.toDomain(), nil
+	domain := volume.toDomain()
+	if zone != "" {
+		domain.AvailabilityZone = zone
+	}
+	return domain, nil
 }
 
 func (c *Client) GetVolumeByName(ctx context.Context, name string, availabilityZone string) (*Volume, error) {
@@ -131,10 +138,11 @@ func (c *Client) ListVolumes(ctx context.Context, page Page) ([]Volume, string, 
 		return nil, "", err
 	}
 	volumes := make([]Volume, 0, len(response.Data.Items))
+	zone := query.Get("availability_zone")
 	for _, volume := range response.Data.Items {
 		domain := volume.toDomain()
-		if domain.AvailabilityZone == "" {
-			domain.AvailabilityZone = query.Get("availability_zone")
+		if zone != "" {
+			domain.AvailabilityZone = zone
 		}
 		volumes = append(volumes, *domain)
 	}

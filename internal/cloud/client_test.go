@@ -54,6 +54,34 @@ func TestClient_CreateVolume_UsesDocumentedEndpointAndAuth(t *testing.T) {
 	}
 }
 
+func TestClient_CreateVolume_UsesRequestAvailabilityZone(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonOK(t, &volumeResponse{
+			Status: true,
+			Data: apiVolume{
+				ID:               "vol-1",
+				Name:             "data",
+				Size:             2,
+				Status:           VolumeStatusAvailable,
+				AvailabilityZone: "nova",
+			},
+		}), nil
+	})
+	client := newTestClient(t, transport)
+	volume, err := client.CreateVolume(context.Background(), VolumeSpec{
+		Name:             "data",
+		SizeBytes:        2 * bytesPerGiB,
+		ProjectID:        "project",
+		AvailabilityZone: "nobus-wa-az2",
+	})
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if volume.AvailabilityZone != "nobus-wa-az2" {
+		t.Fatalf("expected request zone, got %q", volume.AvailabilityZone)
+	}
+}
+
 func TestClient_LoginWithEmailPassword_UsesReturnedBearerToken(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
