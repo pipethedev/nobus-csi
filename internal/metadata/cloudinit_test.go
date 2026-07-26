@@ -29,7 +29,7 @@ func TestReadPath_ConfigDriveFallback_ReturnsInstance(t *testing.T) {
 	path := writeMetadata(t, `{
 		"ds": {
 			"meta_data": {
-				"instance_id": "server-2",
+				"instance-id": "server-2",
 				"availability_zone": "az2",
 				"region": "region2"
 			}

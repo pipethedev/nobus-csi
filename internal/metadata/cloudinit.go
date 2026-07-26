@@ -47,8 +47,8 @@ func readPath(path string) (*Instance, error) {
 		return nil, fmt.Errorf("decode %s: %w", path, err)
 	}
 	instance := Instance{
-		ID:               firstValue(data.V1.InstanceID, data.DS.MetaData.InstanceID),
-		AvailabilityZone: firstValue(data.V1.AvailabilityZone, data.DS.MetaData.AvailabilityZone),
+		ID:               firstValue(data.V1.InstanceID, data.V1.InstanceIDHyphen, data.DS.MetaData.InstanceID, data.DS.MetaData.InstanceIDHyphen),
+		AvailabilityZone: firstValue(data.V1.AvailabilityZone, data.V1.AvailabilityZoneHyphen, data.DS.MetaData.AvailabilityZone),
 		Region:           firstValue(data.V1.Region, data.DS.MetaData.Region),
 	}
 	if instance.ID == "" {
@@ -61,11 +61,13 @@ func closeFile(file *os.File) {
 	_ = file.Close()
 }
 
-func firstValue(value string, fallback string) string {
-	if value != "" {
-		return value
+func firstValue(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
 	}
-	return fallback
+	return ""
 }
 
 type cloudInitData struct {
@@ -74,9 +76,11 @@ type cloudInitData struct {
 }
 
 type cloudInitV1 struct {
-	InstanceID       string `json:"instance_id"`
-	AvailabilityZone string `json:"availability_zone"`
-	Region           string `json:"region"`
+	InstanceID             string `json:"instance_id"`
+	InstanceIDHyphen       string `json:"instance-id"`
+	AvailabilityZone       string `json:"availability_zone"`
+	AvailabilityZoneHyphen string `json:"availability-zone"`
+	Region                 string `json:"region"`
 }
 
 type cloudInitDS struct {
@@ -85,6 +89,7 @@ type cloudInitDS struct {
 
 type cloudInitMetaData struct {
 	InstanceID       string `json:"instance_id"`
+	InstanceIDHyphen string `json:"instance-id"`
 	AvailabilityZone string `json:"availability_zone"`
 	Region           string `json:"region"`
 }

@@ -151,12 +151,16 @@ func (d *Driver) NodeGetInfo(ctx context.Context, _ *csi.NodeGetInfoRequest) (*c
 	if err != nil {
 		return nil, statusError(err)
 	}
-	resp := &csi.NodeGetInfoResponse{
-		NodeId: metadata.InstanceID,
-		AccessibleTopology: &csi.Topology{Segments: map[string]string{
-			"topology.csi.nobus.io/zone":   metadata.AvailabilityZone,
-			"topology.csi.nobus.io/region": metadata.Region,
-		}},
+	segments := map[string]string{}
+	if metadata.AvailabilityZone != "" {
+		segments["topology.csi.nobus.io/zone"] = metadata.AvailabilityZone
+	}
+	if metadata.Region != "" {
+		segments["topology.csi.nobus.io/region"] = metadata.Region
+	}
+	resp := &csi.NodeGetInfoResponse{NodeId: metadata.InstanceID}
+	if len(segments) > 0 {
+		resp.AccessibleTopology = &csi.Topology{Segments: segments}
 	}
 	if metadata.MaxVolumesPerNode > 0 {
 		resp.MaxVolumesPerNode = metadata.MaxVolumesPerNode
