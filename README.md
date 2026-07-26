@@ -2,6 +2,17 @@
 
 `nobus-csi` is a Container Storage Interface driver for Nobus Cloud block storage. It is built as one binary that can run as a Nomad controller, Nomad node plugin, Nomad monolith plugin, or Kubernetes CSI driver.
 
+## Nobus API Reference
+
+The provider integration is based on the Nobus API docs:
+
+```text
+https://cloud-api.nobus.io/api/v2/docs
+https://cloud-api.nobus.io/api/v2/openapi.json
+```
+
+Authentication uses `POST /api/v2/auth/login` with email and password, then sends the returned token as `Authorization: Bearer <token>` on block storage API calls.
+
 ## Build
 
 ```sh
