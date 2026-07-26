@@ -12,10 +12,14 @@ job "nobus-csi-controller" {
 
     task "plugin" {
       driver = "docker"
+      user   = "root"
 
       config {
         image = "ghcr.io/pipethedev/nobus-csi:latest-controller"
-        args  = ["-mode=controller"]
+        args = [
+          "-endpoint=unix:///csi/csi.sock",
+          "-mode=controller",
+        ]
       }
 
       env {

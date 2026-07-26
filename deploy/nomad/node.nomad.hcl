@@ -9,12 +9,9 @@ job "nobus-csi-node" {
       config {
         image      = "ghcr.io/pipethedev/nobus-csi:latest-node"
         privileged = true
-        args       = ["-mode=node"]
-
-        volumes = [
-          "/dev:/dev",
-          "/run/udev:/run/udev",
-          "/sys:/sys"
+        args = [
+          "-endpoint=unix:///csi/csi.sock",
+          "-mode=node",
         ]
       }
 
