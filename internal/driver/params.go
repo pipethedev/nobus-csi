@@ -129,6 +129,13 @@ func firstValue(value string, fallback string) string {
 	return fallback
 }
 
+func volumeContextValue(context map[string]string, key string, fallback string) string {
+	if context == nil {
+		return fallback
+	}
+	return firstValue(context[key], fallback)
+}
+
 func validateCapabilities(capabilities []*csi.VolumeCapability) error {
 	if len(capabilities) == 0 {
 		return status.Error(codes.InvalidArgument, "volume capabilities are required")

@@ -69,11 +69,11 @@ func (f *Fake) GetVolumeByID(_ context.Context, id string) (*Volume, error) {
 	return &volume, nil
 }
 
-func (f *Fake) GetVolumeByName(_ context.Context, name string) (*Volume, error) {
+func (f *Fake) GetVolumeByName(_ context.Context, name string, availabilityZone string) (*Volume, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, volume := range f.volumes {
-		if volume.Name == name {
+		if volume.Name == name && volume.AvailabilityZone == availabilityZone {
 			clone := volume
 			return &clone, nil
 		}
@@ -98,11 +98,14 @@ func (f *Fake) DeleteVolume(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *Fake) ResizeVolume(_ context.Context, id string, sizeBytes int64) (int64, error) {
+func (f *Fake) ResizeVolume(_ context.Context, id string, sizeBytes int64, availabilityZone string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	volume, ok := f.volumes[id]
 	if !ok {
+		return 0, ErrNotFound
+	}
+	if availabilityZone != "" && volume.AvailabilityZone != availabilityZone {
 		return 0, ErrNotFound
 	}
 	if sizeBytes < volume.SizeBytes {
@@ -113,11 +116,14 @@ func (f *Fake) ResizeVolume(_ context.Context, id string, sizeBytes int64) (int6
 	return sizeBytes, nil
 }
 
-func (f *Fake) AttachVolume(_ context.Context, volumeID, instanceID string) (string, error) {
+func (f *Fake) AttachVolume(_ context.Context, volumeID, instanceID string, availabilityZone string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	volume, ok := f.volumes[volumeID]
 	if !ok {
+		return "", ErrNotFound
+	}
+	if availabilityZone != "" && volume.AvailabilityZone != availabilityZone {
 		return "", ErrNotFound
 	}
 	if len(volume.Attachments) > 0 {
@@ -134,11 +140,14 @@ func (f *Fake) AttachVolume(_ context.Context, volumeID, instanceID string) (str
 	return device, nil
 }
 
-func (f *Fake) DetachVolume(_ context.Context, volumeID, instanceID string) error {
+func (f *Fake) DetachVolume(_ context.Context, volumeID, instanceID string, availabilityZone string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	volume, ok := f.volumes[volumeID]
 	if !ok {
+		return nil
+	}
+	if availabilityZone != "" && volume.AvailabilityZone != availabilityZone {
 		return nil
 	}
 	volume.Attachments = slices.DeleteFunc(volume.Attachments, func(attachment Attachment) bool {

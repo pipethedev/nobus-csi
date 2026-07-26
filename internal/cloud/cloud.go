@@ -5,12 +5,12 @@ import "context"
 type Cloud interface {
 	CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, error)
 	GetVolumeByID(ctx context.Context, id string) (*Volume, error)
-	GetVolumeByName(ctx context.Context, name string) (*Volume, error)
+	GetVolumeByName(ctx context.Context, name string, availabilityZone string) (*Volume, error)
 	ListVolumes(ctx context.Context, page Page) ([]Volume, string, error)
 	DeleteVolume(ctx context.Context, id string) error
-	ResizeVolume(ctx context.Context, id string, sizeBytes int64) (int64, error)
-	AttachVolume(ctx context.Context, volumeID, instanceID string) (string, error)
-	DetachVolume(ctx context.Context, volumeID, instanceID string) error
+	ResizeVolume(ctx context.Context, id string, sizeBytes int64, availabilityZone string) (int64, error)
+	AttachVolume(ctx context.Context, volumeID, instanceID string, availabilityZone string) (string, error)
+	DetachVolume(ctx context.Context, volumeID, instanceID string, availabilityZone string) error
 	CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapshot, error)
 	DeleteSnapshot(ctx context.Context, id string) error
 	ListSnapshots(ctx context.Context, page Page) ([]Snapshot, string, error)

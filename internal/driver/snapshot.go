@@ -18,11 +18,16 @@ func (d *Driver) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequ
 	if req.GetSourceVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "source volume id is required")
 	}
+	volume, err := d.cloud.GetVolumeByID(ctx, req.GetSourceVolumeId())
+	if err != nil {
+		return nil, statusError(err)
+	}
 	snapshot, err := d.cloud.CreateSnapshot(ctx, cloud.SnapshotSpec{
 		Name:             req.GetName(),
 		VolumeID:         req.GetSourceVolumeId(),
 		ProjectID:        d.config.ProjectID,
-		AvailabilityZone: d.config.AvailabilityZone,
+		AvailabilityZone: firstValue(volume.AvailabilityZone, d.config.AvailabilityZone),
+		Force:            true,
 		Metadata:         map[string]string{"csi.driver": d.config.DriverName},
 	})
 	if err != nil {

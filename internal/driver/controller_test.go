@@ -174,6 +174,62 @@ func TestCreateVolume_TopologyMatchesNodeGetInfo(t *testing.T) {
 	}
 }
 
+func TestCreateVolume_PreferredTopologyZoneIsIdempotent(t *testing.T) {
+	driver := newTestDriver()
+	req := createVolumeRequest(testGiB)
+	req.AccessibilityRequirements = &csi.TopologyRequirement{
+		Preferred: []*csi.Topology{
+			{Segments: map[string]string{TopologyZoneKey: "az2"}},
+		},
+	}
+	first, err := driver.CreateVolume(context.Background(), req)
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	second, err := driver.CreateVolume(context.Background(), req)
+	if err != nil {
+		t.Fatalf("retry create volume: %v", err)
+	}
+	if first.GetVolume().GetVolumeId() != second.GetVolume().GetVolumeId() {
+		t.Fatalf("expected idempotent volume id %q, got %q", first.GetVolume().GetVolumeId(), second.GetVolume().GetVolumeId())
+	}
+	zone := second.GetVolume().GetAccessibleTopology()[0].GetSegments()[TopologyZoneKey]
+	if zone != "az2" {
+		t.Fatalf("expected az2 topology, got %q", zone)
+	}
+}
+
+func TestControllerUnpublishVolume_UsesProviderVolumeZone(t *testing.T) {
+	driver := newTestDriver()
+	req := createVolumeRequest(testGiB)
+	req.Parameters[paramAvailabilityZone] = "az2"
+	created, err := driver.CreateVolume(context.Background(), req)
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	_, err = driver.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: created.GetVolume().GetVolumeId(),
+		NodeId:   "server-a",
+	})
+	if err != nil {
+		t.Fatalf("publish volume: %v", err)
+	}
+	_, err = driver.ControllerUnpublishVolume(context.Background(), &csi.ControllerUnpublishVolumeRequest{
+		VolumeId: created.GetVolume().GetVolumeId(),
+		NodeId:   "server-a",
+	})
+	if err != nil {
+		t.Fatalf("unpublish volume: %v", err)
+	}
+	volume, err := driver.cloud.GetVolumeByID(context.Background(), created.GetVolume().GetVolumeId())
+	if err != nil {
+		t.Fatalf("get volume: %v", err)
+	}
+	if len(volume.Attachments) != 0 {
+		t.Fatalf("expected no attachments, got %+v", volume.Attachments)
+	}
+}
+
 func TestControllerExpandVolume_GrowsVolume(t *testing.T) {
 	driver := newTestDriver()
 	created, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))

@@ -28,6 +28,9 @@ func TestClient_CreateVolume_UsesDocumentedEndpointAndAuth(t *testing.T) {
 		if body.Size != 2 || body.ProjectID != "project" || body.AvailabilityZone != "az1" {
 			t.Fatalf("unexpected request body: %+v", body)
 		}
+		if body.Multiattach {
+			t.Fatalf("expected multiattach=false")
+		}
 		return jsonOK(t, &volumeResponse{
 			Status: true,
 			Data: apiVolume{
@@ -62,10 +65,13 @@ func TestClient_GetVolumeByName_MissingReturnsNotFound(t *testing.T) {
 		if r.URL.Query().Get("name") != "missing" {
 			t.Fatalf("expected name query")
 		}
+		if r.URL.Query().Get("availability_zone") != "az2" {
+			t.Fatalf("expected az2 query, got %q", r.URL.Query().Get("availability_zone"))
+		}
 		return jsonOK(t, &volumeListResponse{Status: true}), nil
 	})
 	client := newTestClient(t, transport)
-	_, err := client.GetVolumeByName(context.Background(), "missing")
+	_, err := client.GetVolumeByName(context.Background(), "missing", "az2")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -80,6 +86,13 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 			if r.URL.Path != volumeAttachPath {
 				t.Fatalf("expected path %s, got %s", volumeAttachPath, r.URL.Path)
 			}
+			var body attachVolumeRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode attach request: %v", err)
+			}
+			if body.AvailabilityZone != "az2" {
+				t.Fatalf("expected az2 attach zone, got %q", body.AvailabilityZone)
+			}
 			return jsonOK(t, &genericVolumeResponse{
 				Status: true,
 				Data:   json.RawMessage(`{}`),
@@ -87,6 +100,9 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 		case 2:
 			if r.URL.Path != volumePath {
 				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			}
+			if r.URL.Query().Get("availability_zone") != "az2" {
+				t.Fatalf("expected az2 lookup zone, got %q", r.URL.Query().Get("availability_zone"))
 			}
 			return jsonOK(t, &genericVolumeResponse{
 				Status: true,
@@ -103,12 +119,42 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 		}
 	})
 	client := newTestClient(t, transport)
-	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1")
+	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1", "az2")
 	if err != nil {
 		t.Fatalf("attach volume: %v", err)
 	}
 	if device != "/dev/vdb" {
 		t.Fatalf("expected /dev/vdb, got %q", device)
+	}
+}
+
+func TestClient_AttachVolume_UsesAttachResponseDevice(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if r.URL.Path != volumeAttachPath {
+			t.Fatalf("expected path %s, got %s", volumeAttachPath, r.URL.Path)
+		}
+		return jsonOK(t, &genericVolumeResponse{
+			Status: true,
+			Data: rawVolumeJSON(t, apiVolume{
+				ID: "vol-1",
+				Attachments: []apiAttachment{
+					{ServerID: "server-1", Device: "/dev/vdc"},
+				},
+			}),
+		}), nil
+	})
+	client := newTestClient(t, transport)
+	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1", "az1")
+	if err != nil {
+		t.Fatalf("attach volume: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one attach request, got %d", requests)
+	}
+	if device != "/dev/vdc" {
+		t.Fatalf("expected /dev/vdc, got %q", device)
 	}
 }
 
@@ -125,7 +171,21 @@ func TestClient_AttachVolume_PostAttachLookupFailure_ReturnsError(t *testing.T) 
 		return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{Message: "volume not found"}), nil
 	})
 	client := newTestClient(t, transport)
-	_, err := client.AttachVolume(context.Background(), "vol-1", "server-1")
+	_, err := client.AttachVolume(context.Background(), "vol-1", "server-1", "az1")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestClient_DetachVolume_NotAttachedMessageIsNotFound(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != volumeDetachPath {
+			t.Fatalf("expected path %s, got %s", volumeDetachPath, r.URL.Path)
+		}
+		return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{Message: "volume is not attached"}), nil
+	})
+	client := newTestClient(t, transport)
+	err := client.DetachVolume(context.Background(), "vol-1", "server-1", "az1")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}
@@ -140,6 +200,13 @@ func TestClient_ResizeVolume_ReturnsProviderConfirmedSize(t *testing.T) {
 			if r.URL.Path != volumeExtendPath {
 				t.Fatalf("expected path %s, got %s", volumeExtendPath, r.URL.Path)
 			}
+			var body extendVolumeRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode extend request: %v", err)
+			}
+			if body.AvailabilityZone != "az2" {
+				t.Fatalf("expected az2 extend zone, got %q", body.AvailabilityZone)
+			}
 			return jsonOK(t, &genericVolumeResponse{
 				Status: true,
 				Data:   json.RawMessage(`{}`),
@@ -147,6 +214,9 @@ func TestClient_ResizeVolume_ReturnsProviderConfirmedSize(t *testing.T) {
 		case 2:
 			if r.URL.Path != volumePath {
 				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			}
+			if r.URL.Query().Get("availability_zone") != "az2" {
+				t.Fatalf("expected az2 lookup zone, got %q", r.URL.Query().Get("availability_zone"))
 			}
 			return jsonOK(t, &genericVolumeResponse{
 				Status: true,
@@ -161,12 +231,50 @@ func TestClient_ResizeVolume_ReturnsProviderConfirmedSize(t *testing.T) {
 		}
 	})
 	client := newTestClient(t, transport)
-	size, err := client.ResizeVolume(context.Background(), "vol-1", 2*bytesPerGiB)
+	size, err := client.ResizeVolume(context.Background(), "vol-1", 2*bytesPerGiB, "az2")
 	if err != nil {
 		t.Fatalf("resize volume: %v", err)
 	}
 	if size != 3*bytesPerGiB {
 		t.Fatalf("expected provider-confirmed size %d, got %d", 3*bytesPerGiB, size)
+	}
+}
+
+func TestClient_CreateSnapshot_SendsForceAndZone(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != snapshotPath {
+			t.Fatalf("expected path %s, got %s", snapshotPath, r.URL.Path)
+		}
+		var body snapshotRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode snapshot request: %v", err)
+		}
+		if !body.Force {
+			t.Fatalf("expected force=true")
+		}
+		if body.AvailabilityZone != "az2" {
+			t.Fatalf("expected az2 snapshot zone, got %q", body.AvailabilityZone)
+		}
+		return jsonOK(t, &snapshotResponse{
+			Status: true,
+			Data: apiSnapshot{
+				ID:       "snap-1",
+				Name:     "backup",
+				VolumeID: "vol-1",
+				Size:     2,
+			},
+		}), nil
+	})
+	client := newTestClient(t, transport)
+	_, err := client.CreateSnapshot(context.Background(), SnapshotSpec{
+		Name:             "backup",
+		VolumeID:         "vol-1",
+		ProjectID:        "project",
+		AvailabilityZone: "az2",
+		Force:            true,
+	})
+	if err != nil {
+		t.Fatalf("create snapshot: %v", err)
 	}
 }
 
@@ -291,4 +399,5 @@ type responsePayload interface {
 func (*volumeResponse) responsePayload()        {}
 func (*volumeListResponse) responsePayload()    {}
 func (*genericVolumeResponse) responsePayload() {}
+func (*snapshotResponse) responsePayload()      {}
 func (errorResponse) responsePayload()          {}

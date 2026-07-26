@@ -69,6 +69,7 @@ func (c *Client) CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, er
 		SnapshotID:       spec.SnapshotID,
 		Metadata:         spec.Metadata,
 		ProjectID:        spec.ProjectID,
+		Multiattach:      false,
 	})
 	if err != nil {
 		return nil, err
@@ -81,8 +82,15 @@ func (c *Client) CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, er
 }
 
 func (c *Client) GetVolumeByID(ctx context.Context, id string) (*Volume, error) {
+	return c.getVolumeByIDInZone(ctx, id, "")
+}
+
+func (c *Client) getVolumeByIDInZone(ctx context.Context, id string, availabilityZone string) (*Volume, error) {
 	query := c.baseQuery()
 	query.Set("volume_id", id)
+	if availabilityZone != "" {
+		query.Set("availability_zone", availabilityZone)
+	}
 	var response genericVolumeResponse
 	if err := c.do(ctx, http.MethodGet, volumePath, query, nil, decodeJSON(&response)); err != nil {
 		return nil, err
@@ -94,8 +102,8 @@ func (c *Client) GetVolumeByID(ctx context.Context, id string) (*Volume, error) 
 	return volume.toDomain(), nil
 }
 
-func (c *Client) GetVolumeByName(ctx context.Context, name string) (*Volume, error) {
-	query := c.baseQuery()
+func (c *Client) GetVolumeByName(ctx context.Context, name string, availabilityZone string) (*Volume, error) {
+	query := c.zoneQuery(availabilityZone)
 	query.Set("name", name)
 	var response volumeListResponse
 	if err := c.do(ctx, http.MethodGet, volumeListPath, query, nil, decodeJSON(&response)); err != nil {
@@ -111,7 +119,7 @@ func (c *Client) GetVolumeByName(ctx context.Context, name string) (*Volume, err
 
 func (c *Client) ListVolumes(ctx context.Context, _ Page) ([]Volume, string, error) {
 	var response volumeListResponse
-	if err := c.do(ctx, http.MethodGet, volumeListPath, c.baseQuery(), nil, decodeJSON(&response)); err != nil {
+	if err := c.do(ctx, http.MethodGet, volumeListPath, c.zoneQuery(c.config.AvailabilityZone), nil, decodeJSON(&response)); err != nil {
 		return nil, "", err
 	}
 	volumes := make([]Volume, 0, len(response.Data.Items))
@@ -127,11 +135,12 @@ func (c *Client) DeleteVolume(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, volumePath, query, nil, nil)
 }
 
-func (c *Client) ResizeVolume(ctx context.Context, id string, sizeBytes int64) (int64, error) {
+func (c *Client) ResizeVolume(ctx context.Context, id string, sizeBytes int64, availabilityZone string) (int64, error) {
+	zone := firstValue(availabilityZone, c.config.AvailabilityZone)
 	size := bytesToGiB(sizeBytes)
 	payload, err := encodeBody(extendVolumeRequest{
 		ProjectID:        c.config.ProjectID,
-		AvailabilityZone: c.config.AvailabilityZone,
+		AvailabilityZone: zone,
 		VolumeID:         id,
 		NewSize:          size,
 	})
@@ -142,27 +151,32 @@ func (c *Client) ResizeVolume(ctx context.Context, id string, sizeBytes int64) (
 	if err != nil {
 		return 0, err
 	}
-	volume, err := c.GetVolumeByID(ctx, id)
+	volume, err := c.getVolumeByIDInZone(ctx, id, zone)
 	if err != nil {
 		return 0, err
 	}
 	return volume.SizeBytes, nil
 }
 
-func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string) (string, error) {
+func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string, availabilityZone string) (string, error) {
+	zone := firstValue(availabilityZone, c.config.AvailabilityZone)
+	var response genericVolumeResponse
 	payload, err := encodeBody(attachVolumeRequest{
 		ProjectID:        c.config.ProjectID,
-		AvailabilityZone: c.config.AvailabilityZone,
+		AvailabilityZone: zone,
 		ServerID:         instanceID,
 		VolumeID:         volumeID,
 	})
 	if err != nil {
 		return "", err
 	}
-	if err := c.do(ctx, http.MethodPost, volumeAttachPath, nil, payload, nil); err != nil {
+	if err := c.do(ctx, http.MethodPost, volumeAttachPath, nil, payload, decodeJSON(&response)); err != nil {
 		return "", err
 	}
-	volume, err := c.GetVolumeByID(ctx, volumeID)
+	if device, ok := attachedDeviceFromData(response.Data, instanceID); ok {
+		return device, nil
+	}
+	volume, err := c.getVolumeByIDInZone(ctx, volumeID, zone)
 	if err != nil {
 		return "", err
 	}
@@ -174,10 +188,10 @@ func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string) 
 	return "", fmt.Errorf("attached volume %s has no device for instance %s: %w", volumeID, instanceID, ErrUnavailable)
 }
 
-func (c *Client) DetachVolume(ctx context.Context, volumeID, instanceID string) error {
+func (c *Client) DetachVolume(ctx context.Context, volumeID, instanceID string, availabilityZone string) error {
 	payload, err := encodeBody(detachVolumeRequest{
 		ProjectID:        c.config.ProjectID,
-		AvailabilityZone: c.config.AvailabilityZone,
+		AvailabilityZone: firstValue(availabilityZone, c.config.AvailabilityZone),
 		ServerID:         instanceID,
 		VolumeID:         volumeID,
 	})
@@ -275,7 +289,12 @@ func closeBody(body io.Closer) {
 func (c *Client) baseQuery() url.Values {
 	query := url.Values{}
 	query.Set("project_id", c.config.ProjectID)
-	query.Set("availability_zone", c.config.AvailabilityZone)
+	return query
+}
+
+func (c *Client) zoneQuery(availabilityZone string) url.Values {
+	query := c.baseQuery()
+	query.Set("availability_zone", firstValue(availabilityZone, c.config.AvailabilityZone))
 	return query
 }
 
@@ -331,7 +350,11 @@ func mapHTTPError(resp *http.Response) error {
 func classifyClientError(message string) error {
 	normalized := strings.ToLower(message)
 	switch {
-	case strings.Contains(normalized, "not found"), strings.Contains(normalized, "does not exist"):
+	case strings.Contains(normalized, "not found"),
+		strings.Contains(normalized, "does not exist"),
+		strings.Contains(normalized, "not attached"),
+		strings.Contains(normalized, "already detached"),
+		strings.Contains(normalized, "invalid volume"):
 		return fmt.Errorf("%s: %w", message, ErrNotFound)
 	case strings.Contains(normalized, "already exist"), strings.Contains(normalized, "duplicate"):
 		return fmt.Errorf("%s: %w", message, ErrAlreadyExists)
@@ -373,6 +396,29 @@ func decodeVolume(data json.RawMessage) (*apiVolume, error) {
 	return nil, ErrNotFound
 }
 
+func attachedDeviceFromData(data json.RawMessage, instanceID string) (string, bool) {
+	if len(data) == 0 {
+		return "", false
+	}
+	volume, err := decodeVolume(data)
+	if err != nil {
+		return "", false
+	}
+	for _, attachment := range volume.toDomain().Attachments {
+		if attachment.InstanceID == instanceID && attachment.DevicePath != "" {
+			return attachment.DevicePath, true
+		}
+	}
+	return "", false
+}
+
+func firstValue(value string, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
+}
+
 type volumeCreateRequest struct {
 	Size             int               `json:"size"`
 	Name             string            `json:"name,omitempty"`
@@ -381,6 +427,7 @@ type volumeCreateRequest struct {
 	SnapshotID       string            `json:"snapshot_id,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	ProjectID        string            `json:"project_id"`
+	Multiattach      bool              `json:"multiattach"`
 }
 
 func (volumeCreateRequest) request() {}
