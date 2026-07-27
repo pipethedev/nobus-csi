@@ -19,6 +19,7 @@ func TestNodeGetInfo_EmptyRegion_OmitsRegionTopology(t *testing.T) {
 		Endpoint:               DefaultEndpoint,
 		MinimumVolumeBytes:     testGiB,
 		VolumeGranularityBytes: testGiB,
+		AvailabilityZone:       "nobus-wa-az2",
 	}
 	provider := cloud.NewFake(cloud.InstanceMetadata{
 		InstanceID:       "server-1",
@@ -33,11 +34,29 @@ func TestNodeGetInfo_EmptyRegion_OmitsRegionTopology(t *testing.T) {
 		t.Fatalf("expected node id server-1, got %q", resp.GetNodeId())
 	}
 	segments := resp.GetAccessibleTopology().GetSegments()
-	if segments["topology.csi.nobus.io/zone"] != "nova" {
-		t.Fatalf("expected nova zone, got %q", segments["topology.csi.nobus.io/zone"])
+	if segments["topology.csi.nobus.io/zone"] != "nobus-wa-az2" {
+		t.Fatalf("expected configured zone, got %q", segments["topology.csi.nobus.io/zone"])
 	}
 	if _, ok := segments["topology.csi.nobus.io/region"]; ok {
 		t.Fatalf("expected empty region to be omitted")
+	}
+}
+
+func TestNodeGetInfo_ProviderZoneIsKeptWhenSpecific(t *testing.T) {
+	config := testConfig()
+	config.AvailabilityZone = "az1"
+	provider := cloud.NewFake(cloud.InstanceMetadata{
+		InstanceID:       "server-1",
+		AvailabilityZone: "az2",
+	})
+	driver := New(config, provider, mount.NewFake())
+	resp, err := driver.NodeGetInfo(context.Background(), &csi.NodeGetInfoRequest{})
+	if err != nil {
+		t.Fatalf("get node info: %v", err)
+	}
+	segments := resp.GetAccessibleTopology().GetSegments()
+	if segments[TopologyZoneKey] != "az2" {
+		t.Fatalf("expected provider zone, got %q", segments[TopologyZoneKey])
 	}
 }
 

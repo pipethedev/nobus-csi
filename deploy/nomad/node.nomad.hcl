@@ -10,6 +10,10 @@ job "nobus-csi-node" {
         image      = "ghcr.io/pipethedev/nobus-csi:latest-node"
         force_pull = true
         privileged = true
+        volumes = [
+          "/run/cloud-init:/run/cloud-init:ro",
+          "/var/lib/cloud:/var/lib/cloud:ro",
+        ]
         args = [
           "-endpoint=unix:///csi/csi.sock",
           "-mode=node",

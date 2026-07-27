@@ -169,8 +169,9 @@ func (d *Driver) NodeGetInfo(ctx context.Context, _ *csi.NodeGetInfoRequest) (*c
 		return nil, statusError(err)
 	}
 	segments := map[string]string{}
-	if metadata.AvailabilityZone != "" {
-		segments[TopologyZoneKey] = metadata.AvailabilityZone
+	zone := nodeAvailabilityZone(metadata.AvailabilityZone, d.config.AvailabilityZone)
+	if zone != "" {
+		segments[TopologyZoneKey] = zone
 	}
 	if metadata.Region != "" {
 		segments[TopologyRegionKey] = metadata.Region
@@ -183,4 +184,11 @@ func (d *Driver) NodeGetInfo(ctx context.Context, _ *csi.NodeGetInfoRequest) (*c
 		resp.MaxVolumesPerNode = metadata.MaxVolumesPerNode
 	}
 	return resp, nil
+}
+
+func nodeAvailabilityZone(metadataZone string, configuredZone string) string {
+	if configuredZone != "" && (metadataZone == "" || metadataZone == "nova") {
+		return configuredZone
+	}
+	return metadataZone
 }
