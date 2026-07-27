@@ -428,6 +428,43 @@ func TestClient_AttachVolume_FallsBackToDashboardAPI(t *testing.T) {
 	}
 }
 
+func TestClient_AttachVolume_FallsBackToDashboardAPIOnUnavailable(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if r.URL.Path != volumeAttachPath {
+				t.Fatalf("expected cloud attach path %s, got %s", volumeAttachPath, r.URL.Path)
+			}
+			return jsonErrorResponse(t, http.StatusInternalServerError, errorResponse{Message: "Internal Server Error"}), nil
+		case 2:
+			if r.URL.String() != dashboardAPI+"/api/volumes/attach" {
+				t.Fatalf("expected dashboard attach URL, got %s", r.URL.String())
+			}
+			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
+		case 3:
+			return jsonOK(t, volumeListWith(apiVolume{
+				ID: "vol-1",
+				Attachments: []apiAttachment{
+					{ServerID: "server-1", Device: "/dev/vdb"},
+				},
+			})), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+	client := newTestClient(t, transport)
+	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1", "az1")
+	if err != nil {
+		t.Fatalf("attach volume: %v", err)
+	}
+	if device != "/dev/vdb" {
+		t.Fatalf("expected /dev/vdb, got %q", device)
+	}
+}
+
 func TestClient_AttachVolume_PostAttachLookupFailure_ReturnsError(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {

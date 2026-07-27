@@ -202,7 +202,7 @@ func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string, 
 		return "", err
 	}
 	if err := c.do(ctx, http.MethodPost, volumeAttachPath, nil, payload, decodeJSON(&response)); err != nil {
-		if !isDashboardVolumeFallbackError(err) {
+		if !shouldTryDashboardVolumeFallback(err) {
 			return "", err
 		}
 		if err := c.dashboardVolumeAction(ctx, "attach", payload); err != nil {
@@ -235,7 +235,7 @@ func (c *Client) DetachVolume(ctx context.Context, volumeID, instanceID string, 
 		return err
 	}
 	if err := c.do(ctx, http.MethodPost, volumeDetachPath, nil, payload, nil); err != nil {
-		if !isDashboardVolumeFallbackError(err) {
+		if !shouldTryDashboardVolumeFallback(err) {
 			return err
 		}
 		return c.dashboardVolumeAction(ctx, "detach", payload)
@@ -270,8 +270,11 @@ func (c *Client) dashboardVolumeAction(ctx context.Context, action string, paylo
 	return nil
 }
 
-func isDashboardVolumeFallbackError(err error) bool {
-	return strings.Contains(strings.ToLower(err.Error()), "unexpected keyword argument 'email'")
+func shouldTryDashboardVolumeFallback(err error) bool {
+	if errors.Is(err, ErrUnavailable) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "unexpected keyword argument")
 }
 
 func (c *Client) CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapshot, error) {
