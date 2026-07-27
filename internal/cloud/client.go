@@ -28,6 +28,7 @@ const (
 	loginPath        = "/api/v2/auth/login"
 	bytesPerGiB      = int64(1 << 30)
 	defaultTimeout   = 30 * time.Second
+	dashboardAPI     = "https://dashboard.nobus.io"
 )
 
 type Client struct {
@@ -201,7 +202,12 @@ func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string, 
 		return "", err
 	}
 	if err := c.do(ctx, http.MethodPost, volumeAttachPath, nil, payload, decodeJSON(&response)); err != nil {
-		return "", err
+		if !isDashboardVolumeFallbackError(err) {
+			return "", err
+		}
+		if err := c.dashboardVolumeAction(ctx, "attach", payload); err != nil {
+			return "", err
+		}
 	}
 	if device, ok := attachedDeviceFromData(response.Data, instanceID); ok {
 		return device, nil
@@ -228,7 +234,44 @@ func (c *Client) DetachVolume(ctx context.Context, volumeID, instanceID string, 
 	if err != nil {
 		return err
 	}
-	return c.do(ctx, http.MethodPost, volumeDetachPath, nil, payload, nil)
+	if err := c.do(ctx, http.MethodPost, volumeDetachPath, nil, payload, nil); err != nil {
+		if !isDashboardVolumeFallbackError(err) {
+			return err
+		}
+		return c.dashboardVolumeAction(ctx, "detach", payload)
+	}
+	return nil
+}
+
+func (c *Client) dashboardVolumeAction(ctx context.Context, action string, payload []byte) error {
+	token, err := c.bearerToken(ctx)
+	if err != nil {
+		return err
+	}
+	endpoint := dashboardAPI + "/api/volumes/" + action
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("create Nobus dashboard request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "token", Value: token})
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("call Nobus dashboard API: %w", ErrUnavailable)
+	}
+	defer closeBody(resp.Body)
+	if resp.StatusCode >= http.StatusBadRequest {
+		return mapHTTPError(resp)
+	}
+	_, err = io.Copy(io.Discard, resp.Body)
+	if err != nil {
+		return fmt.Errorf("drain Nobus dashboard response: %w", err)
+	}
+	return nil
+}
+
+func isDashboardVolumeFallbackError(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "unexpected keyword argument 'email'")
 }
 
 func (c *Client) CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapshot, error) {

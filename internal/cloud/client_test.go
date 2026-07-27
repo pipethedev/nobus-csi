@@ -127,7 +127,7 @@ func TestClient_LoginWithEmailPassword_UsesReturnedBearerToken(t *testing.T) {
 			if body.Email != "hello@brimble.app" || body.Password != "secret" {
 				t.Fatalf("unexpected login body: %+v", body)
 			}
-			return responseWithRawBody(t, http.StatusOK, `{"token":"login-token"}`), nil
+			return responseWithRawBody(t, `{"token":"login-token"}`), nil
 		case 2:
 			if r.URL.Path != volumeListPath {
 				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
@@ -201,7 +201,7 @@ func TestClient_UnauthorizedRefreshesLoginToken(t *testing.T) {
 			if r.URL.Path != loginPath {
 				t.Fatalf("expected login request, got %s", r.URL.Path)
 			}
-			return responseWithRawBody(t, http.StatusOK, `{"token":"fresh-token"}`), nil
+			return responseWithRawBody(t, `{"token":"fresh-token"}`), nil
 		case 3:
 			if r.URL.Path != volumeListPath {
 				t.Fatalf("expected retried volume request, got %s", r.URL.Path)
@@ -375,6 +375,59 @@ func TestClient_AttachVolume_UsesAttachResponseDevice(t *testing.T) {
 	}
 }
 
+func TestClient_AttachVolume_FallsBackToDashboardAPI(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if r.URL.Path != volumeAttachPath {
+				t.Fatalf("expected cloud attach path %s, got %s", volumeAttachPath, r.URL.Path)
+			}
+			return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{
+				Message: "Unable to Attach volume: new_attach_volume() got an unexpected keyword argument 'email'",
+			}), nil
+		case 2:
+			if r.URL.String() != dashboardAPI+"/api/volumes/attach" {
+				t.Fatalf("expected dashboard attach URL, got %s", r.URL.String())
+			}
+			cookie, err := r.Cookie("token")
+			if err != nil {
+				t.Fatalf("expected dashboard token cookie: %v", err)
+			}
+			if cookie.Value != "token" {
+				t.Fatalf("expected token cookie, got %q", cookie.Value)
+			}
+			var body attachVolumeRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode dashboard request: %v", err)
+			}
+			if body.VolumeID != "vol-1" || body.ServerID != "server-1" {
+				t.Fatalf("unexpected dashboard body: %+v", body)
+			}
+			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
+		case 3:
+			return jsonOK(t, volumeListWith(apiVolume{
+				ID: "vol-1",
+				Attachments: []apiAttachment{
+					{ServerID: "server-1", Device: "/dev/vdb"},
+				},
+			})), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+	client := newTestClient(t, transport)
+	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1", "az1")
+	if err != nil {
+		t.Fatalf("attach volume: %v", err)
+	}
+	if device != "/dev/vdb" {
+		t.Fatalf("expected /dev/vdb, got %q", device)
+	}
+}
+
 func TestClient_AttachVolume_PostAttachLookupFailure_ReturnsError(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -405,6 +458,37 @@ func TestClient_DetachVolume_NotAttachedMessageIsNotFound(t *testing.T) {
 	err := client.DetachVolume(context.Background(), "vol-1", "server-1", "az1")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestClient_DetachVolume_FallsBackToDashboardAPI(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if r.URL.Path != volumeDetachPath {
+				t.Fatalf("expected cloud detach path %s, got %s", volumeDetachPath, r.URL.Path)
+			}
+			return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{
+				Message: "Unable to Detach volume: new_detach_volume() got an unexpected keyword argument 'email'",
+			}), nil
+		case 2:
+			if r.URL.String() != dashboardAPI+"/api/volumes/detach" {
+				t.Fatalf("expected dashboard detach URL, got %s", r.URL.String())
+			}
+			if _, err := r.Cookie("token"); err != nil {
+				t.Fatalf("expected dashboard token cookie: %v", err)
+			}
+			return responseWithRawBody(t, `{"status":true,"data":"Volume detached successfully"}`), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+	client := newTestClient(t, transport)
+	if err := client.DetachVolume(context.Background(), "vol-1", "server-1", "az1"); err != nil {
+		t.Fatalf("detach volume: %v", err)
 	}
 }
 
@@ -523,7 +607,7 @@ func TestClient_CreateSnapshot_SendsForceAndZone(t *testing.T) {
 
 func TestClient_CreateSnapshot_ParsesNobusCreatedAt(t *testing.T) {
 	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
-		return responseWithRawBody(t, http.StatusOK, `{
+		return responseWithRawBody(t, `{
 			"status": true,
 			"data": {
 				"id": "snap-1",
@@ -667,10 +751,10 @@ func responseWithBody(t *testing.T, status int, value responsePayload) *http.Res
 	}
 }
 
-func responseWithRawBody(t *testing.T, status int, value string) *http.Response {
+func responseWithRawBody(t *testing.T, value string) *http.Response {
 	t.Helper()
 	return &http.Response{
-		StatusCode: status,
+		StatusCode: http.StatusOK,
 		Body:       io.NopCloser(bytes.NewReader([]byte(value))),
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 	}
