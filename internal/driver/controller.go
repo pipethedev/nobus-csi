@@ -122,11 +122,28 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.Controlle
 	}
 	device, err := d.cloud.AttachVolume(ctx, req.GetVolumeId(), req.GetNodeId(), zone)
 	if err != nil {
+		if device, ok := d.attachedDeviceAfterPublishError(ctx, req.GetVolumeId(), req.GetNodeId()); ok {
+			return &csi.ControllerPublishVolumeResponse{
+				PublishContext: map[string]string{"device_path": device},
+			}, nil
+		}
 		return nil, statusError(err)
 	}
 	return &csi.ControllerPublishVolumeResponse{
 		PublishContext: map[string]string{"device_path": device},
 	}, nil
+}
+
+func (d *Driver) attachedDeviceAfterPublishError(ctx context.Context, volumeID string, node string) (string, bool) {
+	volume, err := d.cloud.GetVolumeByID(ctx, volumeID)
+	if err != nil {
+		return "", false
+	}
+	device, attachedElsewhere := attachedDevice(*volume, node)
+	if attachedElsewhere {
+		return "", false
+	}
+	return device, device != ""
 }
 
 func attachedDevice(volume cloud.Volume, node string) (string, bool) {

@@ -111,6 +111,20 @@ func TestControllerPublishVolume_MultiattachVolume_ReturnsFailedPrecondition(t *
 	}
 }
 
+func TestControllerPublishVolume_AttachErrorWithSameNodeAttachment_ReturnsOK(t *testing.T) {
+	driver := New(testConfig(), newAttachErrorAttachedCloud(), mount.NewFake())
+	resp, err := driver.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: "vol-1",
+		NodeId:   "server-a",
+	})
+	if err != nil {
+		t.Fatalf("expected publish to reconcile attached volume: %v", err)
+	}
+	if resp.GetPublishContext()["device_path"] != "/dev/vdc" {
+		t.Fatalf("expected reconciled device /dev/vdc, got %q", resp.GetPublishContext()["device_path"])
+	}
+}
+
 func TestControllerUnpublishVolume_MissingNode_ReturnsOK(t *testing.T) {
 	driver := newTestDriver()
 	_, err := driver.ControllerUnpublishVolume(context.Background(), &csi.ControllerUnpublishVolumeRequest{
@@ -1088,6 +1102,37 @@ func (a *attachedOrphanCreateCloud) DeleteVolume(_ context.Context, id string) e
 
 func (a *attachedOrphanCreateCloud) deleted(id string) bool {
 	return slices.Contains(a.deletedIDs, id)
+}
+
+type attachErrorAttachedCloud struct {
+	cloud.Cloud
+	mu       sync.Mutex
+	getCalls int
+}
+
+func newAttachErrorAttachedCloud() *attachErrorAttachedCloud {
+	return &attachErrorAttachedCloud{}
+}
+
+func (a *attachErrorAttachedCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.getCalls++
+	volume := &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}
+	if a.getCalls > 1 {
+		volume.Status = cloud.VolumeStatusInUse
+		volume.Attachments = []cloud.Attachment{{InstanceID: "server-a", DevicePath: "/dev/vdc"}}
+	}
+	return volume, nil
+}
+
+func (a *attachErrorAttachedCloud) AttachVolume(context.Context, string, string, string) (string, error) {
+	return "", cloud.ErrUnavailable
 }
 
 type laggedSnapshotCloud struct {
