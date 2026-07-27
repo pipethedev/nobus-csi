@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestClient_CreateVolume_UsesDocumentedEndpointAndAuth(t *testing.T) {
@@ -346,6 +347,48 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 	}
 	if device != "/dev/vdb" {
 		t.Fatalf("expected /dev/vdb, got %q", device)
+	}
+}
+
+func TestClient_AttachVolume_WaitsForDevice(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if r.URL.String() != dashboardAPI+"/api/volumes/attach" {
+				t.Fatalf("expected dashboard attach URL, got %s", r.URL.String())
+			}
+			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
+		case 2:
+			return jsonOK(t, volumeListWith(apiVolume{
+				ID:     "vol-1",
+				Status: VolumeStatusCreating,
+				Attachments: []apiAttachment{
+					{ServerID: "server-1"},
+				},
+			})), nil
+		case 3:
+			return jsonOK(t, volumeListWith(apiVolume{
+				ID:     "vol-1",
+				Status: VolumeStatusInUse,
+				Attachments: []apiAttachment{
+					{ServerID: "server-1", Device: "/dev/vdc"},
+				},
+			})), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+	client := newTestClient(t, transport)
+	client.poll = time.Millisecond
+	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1", "az1")
+	if err != nil {
+		t.Fatalf("attach volume: %v", err)
+	}
+	if device != "/dev/vdc" {
+		t.Fatalf("expected /dev/vdc, got %q", device)
 	}
 }
 

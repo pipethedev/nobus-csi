@@ -28,6 +28,8 @@ const (
 	loginPath        = "/api/v2/auth/login"
 	bytesPerGiB      = int64(1 << 30)
 	defaultTimeout   = 30 * time.Second
+	attachWait       = 3 * time.Minute
+	attachPoll       = 2 * time.Second
 	dashboardAPI     = "https://dashboard.nobus.io"
 )
 
@@ -37,6 +39,7 @@ type Client struct {
 	token  string
 	http   *http.Client
 	config ClientConfig
+	poll   time.Duration
 }
 
 type ClientConfig struct {
@@ -64,7 +67,7 @@ func NewClient(config ClientConfig) (*Client, error) {
 	if client == nil {
 		client = &http.Client{Timeout: defaultTimeout}
 	}
-	return &Client{base: base, token: config.Token, http: client, config: config}, nil
+	return &Client{base: base, token: config.Token, http: client, config: config, poll: attachPoll}, nil
 }
 
 func (c *Client) CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, error) {
@@ -206,16 +209,33 @@ func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string, 
 	if err := c.dashboardVolumeAction(ctx, "attach", payload); err != nil {
 		return "", err
 	}
-	volume, err := c.getVolumeByIDInZone(ctx, volumeID, zone)
-	if err != nil {
-		return "", err
-	}
-	for _, attachment := range volume.Attachments {
-		if attachment.InstanceID == instanceID {
-			return attachment.DevicePath, nil
+	return c.waitAttachedDevice(ctx, volumeID, instanceID, zone)
+}
+
+func (c *Client) waitAttachedDevice(ctx context.Context, volumeID string, instanceID string, zone string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, attachWait)
+	defer cancel()
+	for {
+		volume, err := c.getVolumeByIDInZone(ctx, volumeID, zone)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return "", err
+			}
+			return "", fmt.Errorf("wait for attached volume %s: %w", volumeID, err)
+		}
+		for _, attachment := range volume.Attachments {
+			if attachment.InstanceID == instanceID && attachment.DevicePath != "" {
+				return attachment.DevicePath, nil
+			}
+		}
+		timer := time.NewTimer(c.poll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return "", fmt.Errorf("attached volume %s has no device for instance %s: %w", volumeID, instanceID, ErrUnavailable)
+		case <-timer.C:
 		}
 	}
-	return "", fmt.Errorf("attached volume %s has no device for instance %s: %w", volumeID, instanceID, ErrUnavailable)
 }
 
 func (c *Client) DetachVolume(ctx context.Context, volumeID, instanceID string, availabilityZone string) error {
