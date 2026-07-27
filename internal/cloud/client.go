@@ -191,7 +191,6 @@ func (c *Client) ResizeVolume(ctx context.Context, id string, sizeBytes int64, a
 
 func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string, availabilityZone string) (string, error) {
 	zone := firstValue(availabilityZone, c.config.AvailabilityZone)
-	var response genericVolumeResponse
 	payload, err := encodeBody(attachVolumeRequest{
 		ProjectID:        c.config.ProjectID,
 		AvailabilityZone: zone,
@@ -201,16 +200,11 @@ func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string, 
 	if err != nil {
 		return "", err
 	}
-	if err := c.do(ctx, http.MethodPost, volumeAttachPath, nil, payload, decodeJSON(&response)); err != nil {
-		if !shouldTryDashboardVolumeFallback(err) {
-			return "", err
-		}
-		if err := c.dashboardVolumeAction(ctx, "attach", payload); err != nil {
-			return "", err
-		}
-	}
-	if device, ok := attachedDeviceFromData(response.Data, instanceID); ok {
-		return device, nil
+	// Nobus' public OpenAPI attach endpoint currently fails for valid dashboard-compatible
+	// requests. Use the dashboard proxy directly until the provider fixes /api/v2/volume/attach.
+	// if err := c.do(ctx, http.MethodPost, volumeAttachPath, nil, payload, decodeJSON(&response)); err != nil { ... }
+	if err := c.dashboardVolumeAction(ctx, "attach", payload); err != nil {
+		return "", err
 	}
 	volume, err := c.getVolumeByIDInZone(ctx, volumeID, zone)
 	if err != nil {
@@ -234,13 +228,10 @@ func (c *Client) DetachVolume(ctx context.Context, volumeID, instanceID string, 
 	if err != nil {
 		return err
 	}
-	if err := c.do(ctx, http.MethodPost, volumeDetachPath, nil, payload, nil); err != nil {
-		if !shouldTryDashboardVolumeFallback(err) {
-			return err
-		}
-		return c.dashboardVolumeAction(ctx, "detach", payload)
-	}
-	return nil
+	// Nobus' public OpenAPI detach endpoint is paired with the broken attach endpoint above.
+	// Use the dashboard proxy directly until the provider fixes /api/v2/volume/detach.
+	// if err := c.do(ctx, http.MethodPost, volumeDetachPath, nil, payload, nil); err != nil { ... }
+	return c.dashboardVolumeAction(ctx, "detach", payload)
 }
 
 func (c *Client) dashboardVolumeAction(ctx context.Context, action string, payload []byte) error {
@@ -268,13 +259,6 @@ func (c *Client) dashboardVolumeAction(ctx context.Context, action string, paylo
 		return fmt.Errorf("drain Nobus dashboard response: %w", err)
 	}
 	return nil
-}
-
-func shouldTryDashboardVolumeFallback(err error) bool {
-	if errors.Is(err, ErrUnavailable) {
-		return true
-	}
-	return strings.Contains(strings.ToLower(err.Error()), "unexpected keyword argument")
 }
 
 func (c *Client) CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapshot, error) {
@@ -560,22 +544,6 @@ func decodeVolume(data json.RawMessage) (*apiVolume, error) {
 		return &wrapped.Items[0], nil
 	}
 	return nil, ErrNotFound
-}
-
-func attachedDeviceFromData(data json.RawMessage, instanceID string) (string, bool) {
-	if len(data) == 0 {
-		return "", false
-	}
-	volume, err := decodeVolume(data)
-	if err != nil {
-		return "", false
-	}
-	for _, attachment := range volume.toDomain().Attachments {
-		if attachment.InstanceID == instanceID && attachment.DevicePath != "" {
-			return attachment.DevicePath, true
-		}
-	}
-	return "", false
 }
 
 func firstValue(value string, fallback string) string {

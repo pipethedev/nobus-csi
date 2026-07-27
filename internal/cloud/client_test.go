@@ -303,8 +303,15 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 		requests++
 		switch requests {
 		case 1:
-			if r.URL.Path != volumeAttachPath {
-				t.Fatalf("expected path %s, got %s", volumeAttachPath, r.URL.Path)
+			if r.URL.String() != dashboardAPI+"/api/volumes/attach" {
+				t.Fatalf("expected dashboard attach URL, got %s", r.URL.String())
+			}
+			cookie, err := r.Cookie("token")
+			if err != nil {
+				t.Fatalf("expected dashboard token cookie: %v", err)
+			}
+			if cookie.Value != "token" {
+				t.Fatalf("expected token cookie, got %q", cookie.Value)
 			}
 			var body attachVolumeRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -313,10 +320,7 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 			if body.AvailabilityZone != "az2" {
 				t.Fatalf("expected az2 attach zone, got %q", body.AvailabilityZone)
 			}
-			return jsonOK(t, &genericVolumeResponse{
-				Status: true,
-				Data:   json.RawMessage(`{}`),
-			}), nil
+			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
 		case 2:
 			if r.URL.Path != volumeListPath {
 				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
@@ -345,135 +349,15 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 	}
 }
 
-func TestClient_AttachVolume_UsesAttachResponseDevice(t *testing.T) {
-	requests := 0
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		requests++
-		if r.URL.Path != volumeAttachPath {
-			t.Fatalf("expected path %s, got %s", volumeAttachPath, r.URL.Path)
-		}
-		return jsonOK(t, &genericVolumeResponse{
-			Status: true,
-			Data: rawVolumeJSON(t, apiVolume{
-				ID: "vol-1",
-				Attachments: []apiAttachment{
-					{ServerID: "server-1", Device: "/dev/vdc"},
-				},
-			}),
-		}), nil
-	})
-	client := newTestClient(t, transport)
-	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1", "az1")
-	if err != nil {
-		t.Fatalf("attach volume: %v", err)
-	}
-	if requests != 1 {
-		t.Fatalf("expected one attach request, got %d", requests)
-	}
-	if device != "/dev/vdc" {
-		t.Fatalf("expected /dev/vdc, got %q", device)
-	}
-}
-
-func TestClient_AttachVolume_FallsBackToDashboardAPI(t *testing.T) {
-	requests := 0
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		requests++
-		switch requests {
-		case 1:
-			if r.URL.Path != volumeAttachPath {
-				t.Fatalf("expected cloud attach path %s, got %s", volumeAttachPath, r.URL.Path)
-			}
-			return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{
-				Message: "Unable to Attach volume: new_attach_volume() got an unexpected keyword argument 'email'",
-			}), nil
-		case 2:
-			if r.URL.String() != dashboardAPI+"/api/volumes/attach" {
-				t.Fatalf("expected dashboard attach URL, got %s", r.URL.String())
-			}
-			cookie, err := r.Cookie("token")
-			if err != nil {
-				t.Fatalf("expected dashboard token cookie: %v", err)
-			}
-			if cookie.Value != "token" {
-				t.Fatalf("expected token cookie, got %q", cookie.Value)
-			}
-			var body attachVolumeRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode dashboard request: %v", err)
-			}
-			if body.VolumeID != "vol-1" || body.ServerID != "server-1" {
-				t.Fatalf("unexpected dashboard body: %+v", body)
-			}
-			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
-		case 3:
-			return jsonOK(t, volumeListWith(apiVolume{
-				ID: "vol-1",
-				Attachments: []apiAttachment{
-					{ServerID: "server-1", Device: "/dev/vdb"},
-				},
-			})), nil
-		default:
-			t.Fatalf("unexpected request %d", requests)
-			return nil, nil
-		}
-	})
-	client := newTestClient(t, transport)
-	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1", "az1")
-	if err != nil {
-		t.Fatalf("attach volume: %v", err)
-	}
-	if device != "/dev/vdb" {
-		t.Fatalf("expected /dev/vdb, got %q", device)
-	}
-}
-
-func TestClient_AttachVolume_FallsBackToDashboardAPIOnUnavailable(t *testing.T) {
-	requests := 0
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		requests++
-		switch requests {
-		case 1:
-			if r.URL.Path != volumeAttachPath {
-				t.Fatalf("expected cloud attach path %s, got %s", volumeAttachPath, r.URL.Path)
-			}
-			return jsonErrorResponse(t, http.StatusInternalServerError, errorResponse{Message: "Internal Server Error"}), nil
-		case 2:
-			if r.URL.String() != dashboardAPI+"/api/volumes/attach" {
-				t.Fatalf("expected dashboard attach URL, got %s", r.URL.String())
-			}
-			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
-		case 3:
-			return jsonOK(t, volumeListWith(apiVolume{
-				ID: "vol-1",
-				Attachments: []apiAttachment{
-					{ServerID: "server-1", Device: "/dev/vdb"},
-				},
-			})), nil
-		default:
-			t.Fatalf("unexpected request %d", requests)
-			return nil, nil
-		}
-	})
-	client := newTestClient(t, transport)
-	device, err := client.AttachVolume(context.Background(), "vol-1", "server-1", "az1")
-	if err != nil {
-		t.Fatalf("attach volume: %v", err)
-	}
-	if device != "/dev/vdb" {
-		t.Fatalf("expected /dev/vdb, got %q", device)
-	}
-}
-
 func TestClient_AttachVolume_PostAttachLookupFailure_ReturnsError(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
 		if requests == 1 {
-			return jsonOK(t, &genericVolumeResponse{
-				Status: true,
-				Data:   json.RawMessage(`{}`),
-			}), nil
+			if r.URL.String() != dashboardAPI+"/api/volumes/attach" {
+				t.Fatalf("expected dashboard attach URL, got %s", r.URL.String())
+			}
+			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
 		}
 		return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{Message: "volume not found"}), nil
 	})
@@ -484,48 +368,24 @@ func TestClient_AttachVolume_PostAttachLookupFailure_ReturnsError(t *testing.T) 
 	}
 }
 
-func TestClient_DetachVolume_NotAttachedMessageIsNotFound(t *testing.T) {
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path != volumeDetachPath {
-			t.Fatalf("expected path %s, got %s", volumeDetachPath, r.URL.Path)
-		}
-		return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{Message: "volume is not attached"}), nil
-	})
-	client := newTestClient(t, transport)
-	err := client.DetachVolume(context.Background(), "vol-1", "server-1", "az1")
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected ErrNotFound, got %v", err)
-	}
-}
-
-func TestClient_DetachVolume_FallsBackToDashboardAPI(t *testing.T) {
+func TestClient_DetachVolume_UsesDashboardAPI(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
-		switch requests {
-		case 1:
-			if r.URL.Path != volumeDetachPath {
-				t.Fatalf("expected cloud detach path %s, got %s", volumeDetachPath, r.URL.Path)
-			}
-			return jsonErrorResponse(t, http.StatusBadRequest, errorResponse{
-				Message: "Unable to Detach volume: new_detach_volume() got an unexpected keyword argument 'email'",
-			}), nil
-		case 2:
-			if r.URL.String() != dashboardAPI+"/api/volumes/detach" {
-				t.Fatalf("expected dashboard detach URL, got %s", r.URL.String())
-			}
-			if _, err := r.Cookie("token"); err != nil {
-				t.Fatalf("expected dashboard token cookie: %v", err)
-			}
-			return responseWithRawBody(t, `{"status":true,"data":"Volume detached successfully"}`), nil
-		default:
-			t.Fatalf("unexpected request %d", requests)
-			return nil, nil
+		if r.URL.String() != dashboardAPI+"/api/volumes/detach" {
+			t.Fatalf("expected dashboard detach URL, got %s", r.URL.String())
 		}
+		if _, err := r.Cookie("token"); err != nil {
+			t.Fatalf("expected dashboard token cookie: %v", err)
+		}
+		return responseWithRawBody(t, `{"status":true,"data":"Volume detached successfully"}`), nil
 	})
 	client := newTestClient(t, transport)
 	if err := client.DetachVolume(context.Background(), "vol-1", "server-1", "az1"); err != nil {
 		t.Fatalf("detach volume: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one detach request, got %d", requests)
 	}
 }
 
