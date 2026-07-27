@@ -707,7 +707,7 @@ type apiSnapshot struct {
 	VolumeID         string            `json:"volume_id"`
 	Status           SnapshotStatus    `json:"status"`
 	Size             int               `json:"size"`
-	CreatedAt        time.Time         `json:"created_at"`
+	CreatedAt        string            `json:"created_at"`
 	AvailabilityZone string            `json:"availability_zone"`
 	Metadata         map[string]string `json:"metadata"`
 }
@@ -719,8 +719,21 @@ func (s apiSnapshot) toDomain() *Snapshot {
 		VolumeID:         s.VolumeID,
 		SizeBytes:        int64(s.Size) * bytesPerGiB,
 		Status:           s.Status,
-		CreatedAt:        s.CreatedAt,
+		CreatedAt:        parseNobusTime(s.CreatedAt),
 		AvailabilityZone: s.AvailabilityZone,
 		Metadata:         s.Metadata,
 	}
+}
+
+func parseNobusTime(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.999999", "2006-01-02T15:04:05.999", "2006-01-02T15:04:05"} {
+		parsed, err := time.Parse(layout, value)
+		if err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }

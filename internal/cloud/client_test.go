@@ -521,6 +521,36 @@ func TestClient_CreateSnapshot_SendsForceAndZone(t *testing.T) {
 	}
 }
 
+func TestClient_CreateSnapshot_ParsesNobusCreatedAt(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return responseWithRawBody(t, http.StatusOK, `{
+			"status": true,
+			"data": {
+				"id": "snap-1",
+				"name": "backup",
+				"volume_id": "vol-1",
+				"status": "available",
+				"size": 2,
+				"created_at": "2026-07-27T00:06:57"
+			}
+		}`), nil
+	})
+	client := newTestClient(t, transport)
+	snapshot, err := client.CreateSnapshot(context.Background(), SnapshotSpec{
+		Name:             "backup",
+		VolumeID:         "vol-1",
+		ProjectID:        "project",
+		AvailabilityZone: "az2",
+		Force:            true,
+	})
+	if err != nil {
+		t.Fatalf("create snapshot: %v", err)
+	}
+	if snapshot.CreatedAt.IsZero() {
+		t.Fatalf("expected parsed creation time")
+	}
+}
+
 func TestClient_ErrorStatus_MapsRateLimit(t *testing.T) {
 	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return jsonErrorResponse(t, http.StatusTooManyRequests, errorResponse{Message: "slow down"}), nil
