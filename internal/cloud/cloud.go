@@ -23,6 +23,7 @@ type Cloud interface {
 type Page struct {
 	Token            string
 	Size             int
+	ID               string
 	Name             string
 	AvailabilityZone string
 }

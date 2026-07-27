@@ -33,7 +33,11 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	defer unlock()
 	existing, err := d.reconcileVolumeByName(ctx, spec)
 	if err == nil {
-		return &csi.CreateVolumeResponse{Volume: csiVolume(*existing)}, nil
+		verified, err := d.verifyVolume(ctx, *existing, spec)
+		if err != nil {
+			return nil, err
+		}
+		return &csi.CreateVolumeResponse{Volume: csiVolume(*verified)}, nil
 	}
 	if !errors.Is(err, cloud.ErrNotFound) {
 		return nil, grpcError(err)
@@ -43,7 +47,11 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 		if errors.Is(err, cloud.ErrAlreadyExists) {
 			reconciled, getErr := d.reconcileVolumeByName(ctx, spec)
 			if getErr == nil {
-				return &csi.CreateVolumeResponse{Volume: csiVolume(*reconciled)}, nil
+				verified, err := d.verifyVolume(ctx, *reconciled, spec)
+				if err != nil {
+					return nil, err
+				}
+				return &csi.CreateVolumeResponse{Volume: csiVolume(*verified)}, nil
 			}
 		}
 		return nil, statusError(err)
@@ -52,7 +60,11 @@ func (d *Driver) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest)
 	if err != nil {
 		return nil, err
 	}
-	return &csi.CreateVolumeResponse{Volume: csiVolume(*reconciled)}, nil
+	verified, err := d.verifyVolume(ctx, *reconciled, spec)
+	if err != nil {
+		return nil, err
+	}
+	return &csi.CreateVolumeResponse{Volume: csiVolume(*verified)}, nil
 }
 
 func (d *Driver) DeleteVolume(ctx context.Context, req *csi.DeleteVolumeRequest) (*csi.DeleteVolumeResponse, error) {
@@ -177,6 +189,21 @@ func (d *Driver) reconcileCreatedVolume(ctx context.Context, spec cloud.VolumeSp
 		return nil, grpcError(err)
 	}
 	return canonical, nil
+}
+
+func (d *Driver) verifyVolume(ctx context.Context, volume cloud.Volume, spec cloud.VolumeSpec) (*cloud.Volume, error) {
+	verified, err := d.cloud.GetVolumeByID(ctx, volume.ID)
+	if err != nil {
+		if errors.Is(err, cloud.ErrNotFound) {
+			return nil, statusError(cloud.ErrUnavailable)
+		}
+		return nil, statusError(err)
+	}
+	verified.AvailabilityZone = spec.AvailabilityZone
+	if !compatibleVolume(*verified, spec) {
+		return nil, status.Error(codes.AlreadyExists, "volume name exists with different parameters")
+	}
+	return verified, nil
 }
 
 func (d *Driver) reconcileVolumeByName(ctx context.Context, spec cloud.VolumeSpec) (*cloud.Volume, error) {

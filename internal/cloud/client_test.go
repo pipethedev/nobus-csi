@@ -82,6 +82,32 @@ func TestClient_CreateVolume_UsesRequestAvailabilityZone(t *testing.T) {
 	}
 }
 
+func TestClient_GetVolumeByID_UsesListEndpoint(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != volumeListPath {
+			t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
+		}
+		if r.URL.Query().Get("id") != "vol-1" {
+			t.Fatalf("expected id filter vol-1, got %q", r.URL.Query().Get("id"))
+		}
+		return jsonOK(t, volumeListWith(apiVolume{
+			ID:               "vol-1",
+			Name:             "data",
+			Size:             1,
+			Status:           VolumeStatusAvailable,
+			AvailabilityZone: "nova",
+		})), nil
+	})
+	client := newTestClient(t, transport)
+	volume, err := client.GetVolumeByID(context.Background(), "vol-1")
+	if err != nil {
+		t.Fatalf("get volume: %v", err)
+	}
+	if volume.ID != "vol-1" || volume.AvailabilityZone != "az1" {
+		t.Fatalf("unexpected volume: %+v", volume)
+	}
+}
+
 func TestClient_LoginWithEmailPassword_UsesReturnedBearerToken(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -103,19 +129,13 @@ func TestClient_LoginWithEmailPassword_UsesReturnedBearerToken(t *testing.T) {
 			}
 			return responseWithRawBody(t, http.StatusOK, `{"token":"login-token"}`), nil
 		case 2:
-			if r.URL.Path != volumePath {
-				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			if r.URL.Path != volumeListPath {
+				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
 			}
 			if r.Header.Get("Authorization") != "Bearer login-token" {
 				t.Fatalf("expected login bearer auth, got %q", r.Header.Get("Authorization"))
 			}
-			return jsonOK(t, &genericVolumeResponse{
-				Status: true,
-				Data: rawVolumeJSON(t, apiVolume{
-					ID:   "vol-1",
-					Size: 1,
-				}),
-			}), nil
+			return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1", Size: 1})), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -145,13 +165,7 @@ func TestClient_TokenSkipsLogin(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer provided-token" {
 			t.Fatalf("expected provided bearer auth, got %q", r.Header.Get("Authorization"))
 		}
-		return jsonOK(t, &genericVolumeResponse{
-			Status: true,
-			Data: rawVolumeJSON(t, apiVolume{
-				ID:   "vol-1",
-				Size: 1,
-			}),
-		}), nil
+		return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1", Size: 1})), nil
 	})
 	client, err := NewClient(ClientConfig{
 		BaseURL:          "https://cloud-api.nobus.io",
@@ -176,7 +190,7 @@ func TestClient_UnauthorizedRefreshesLoginToken(t *testing.T) {
 		requests++
 		switch requests {
 		case 1:
-			if r.URL.Path != volumePath {
+			if r.URL.Path != volumeListPath {
 				t.Fatalf("expected volume request, got %s", r.URL.Path)
 			}
 			if r.Header.Get("Authorization") != "Bearer expired-token" {
@@ -189,19 +203,13 @@ func TestClient_UnauthorizedRefreshesLoginToken(t *testing.T) {
 			}
 			return responseWithRawBody(t, http.StatusOK, `{"token":"fresh-token"}`), nil
 		case 3:
-			if r.URL.Path != volumePath {
+			if r.URL.Path != volumeListPath {
 				t.Fatalf("expected retried volume request, got %s", r.URL.Path)
 			}
 			if r.Header.Get("Authorization") != "Bearer fresh-token" {
 				t.Fatalf("expected fresh bearer auth, got %q", r.Header.Get("Authorization"))
 			}
-			return jsonOK(t, &genericVolumeResponse{
-				Status: true,
-				Data: rawVolumeJSON(t, apiVolume{
-					ID:   "vol-1",
-					Size: 1,
-				}),
-			}), nil
+			return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1", Size: 1})), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -244,6 +252,51 @@ func TestClient_GetVolumeByName_MissingReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestClient_DeleteVolume_SendsAvailabilityZone(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			if r.URL.Path != volumePath {
+				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			}
+			if r.URL.Query().Get("availability_zone") != "az1" {
+				t.Fatalf("expected az1 query, got %q", r.URL.Query().Get("availability_zone"))
+			}
+			return jsonOK(t, &genericVolumeResponse{Status: true, Data: json.RawMessage(`{}`)}), nil
+		case 2:
+			if r.URL.Path != volumeListPath {
+				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
+			}
+			return jsonOK(t, volumeListWith()), nil
+		default:
+			t.Fatalf("unexpected request %d", requests)
+			return nil, nil
+		}
+	})
+	client := newTestClient(t, transport)
+	if err := client.DeleteVolume(context.Background(), "vol-1"); err != nil {
+		t.Fatalf("delete volume: %v", err)
+	}
+}
+
+func TestClient_DeleteVolume_StillListedReturnsUnavailable(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		if requests == 1 {
+			return jsonOK(t, &genericVolumeResponse{Status: true, Data: json.RawMessage(`{}`)}), nil
+		}
+		return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1"})), nil
+	})
+	client := newTestClient(t, transport)
+	err := client.DeleteVolume(context.Background(), "vol-1")
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("expected ErrUnavailable, got %v", err)
+	}
+}
+
 func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -265,21 +318,18 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 				Data:   json.RawMessage(`{}`),
 			}), nil
 		case 2:
-			if r.URL.Path != volumePath {
-				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			if r.URL.Path != volumeListPath {
+				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
 			}
 			if r.URL.Query().Get("availability_zone") != "az2" {
 				t.Fatalf("expected az2 lookup zone, got %q", r.URL.Query().Get("availability_zone"))
 			}
-			return jsonOK(t, &genericVolumeResponse{
-				Status: true,
-				Data: rawVolumeJSON(t, apiVolume{
-					ID: "vol-1",
-					Attachments: []apiAttachment{
-						{ServerID: "server-1", Device: "/dev/vdb"},
-					},
-				}),
-			}), nil
+			return jsonOK(t, volumeListWith(apiVolume{
+				ID: "vol-1",
+				Attachments: []apiAttachment{
+					{ServerID: "server-1", Device: "/dev/vdb"},
+				},
+			})), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -411,19 +461,13 @@ func TestClient_ResizeVolume_ReturnsProviderConfirmedSize(t *testing.T) {
 				Data:   json.RawMessage(`{}`),
 			}), nil
 		case 2:
-			if r.URL.Path != volumePath {
-				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			if r.URL.Path != volumeListPath {
+				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
 			}
 			if r.URL.Query().Get("availability_zone") != "az2" {
 				t.Fatalf("expected az2 lookup zone, got %q", r.URL.Query().Get("availability_zone"))
 			}
-			return jsonOK(t, &genericVolumeResponse{
-				Status: true,
-				Data: rawVolumeJSON(t, apiVolume{
-					ID:   "vol-1",
-					Size: 3,
-				}),
-			}), nil
+			return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1", Size: 3})), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -609,6 +653,12 @@ func rawVolumeJSON(t *testing.T, value apiVolume) json.RawMessage {
 		t.Fatalf("marshal raw json: %v", err)
 	}
 	return data
+}
+
+func volumeListWith(items ...apiVolume) *volumeListResponse {
+	response := &volumeListResponse{Status: true}
+	response.Data.Items = items
+	return response
 }
 
 type responsePayload interface {

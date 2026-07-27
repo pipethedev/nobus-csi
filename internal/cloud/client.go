@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -93,25 +94,18 @@ func (c *Client) GetVolumeByID(ctx context.Context, id string) (*Volume, error) 
 }
 
 func (c *Client) getVolumeByIDInZone(ctx context.Context, id string, availabilityZone string) (*Volume, error) {
-	query := c.baseQuery()
-	query.Set("volume_id", id)
 	zone := firstValue(availabilityZone, c.config.AvailabilityZone)
-	if zone != "" {
-		query.Set("availability_zone", zone)
-	}
-	var response genericVolumeResponse
-	if err := c.do(ctx, http.MethodGet, volumePath, query, nil, decodeJSON(&response)); err != nil {
-		return nil, err
-	}
-	volume, err := decodeVolume(response.Data)
+	volumes, _, err := c.ListVolumes(ctx, Page{ID: id, AvailabilityZone: zone})
 	if err != nil {
 		return nil, err
 	}
-	domain := volume.toDomain()
-	if zone != "" {
-		domain.AvailabilityZone = zone
+	for _, volume := range volumes {
+		if volume.ID == id {
+			clone := volume
+			return &clone, nil
+		}
 	}
-	return domain, nil
+	return nil, ErrNotFound
 }
 
 func (c *Client) GetVolumeByName(ctx context.Context, name string, availabilityZone string) (*Volume, error) {
@@ -130,6 +124,9 @@ func (c *Client) GetVolumeByName(ctx context.Context, name string, availabilityZ
 
 func (c *Client) ListVolumes(ctx context.Context, page Page) ([]Volume, string, error) {
 	query := c.zoneQuery(firstValue(page.AvailabilityZone, c.config.AvailabilityZone))
+	if page.ID != "" {
+		query.Set("id", page.ID)
+	}
 	if page.Name != "" {
 		query.Set("name", page.Name)
 	}
@@ -154,9 +151,18 @@ func (c *Client) ListVolumes(ctx context.Context, page Page) ([]Volume, string, 
 }
 
 func (c *Client) DeleteVolume(ctx context.Context, id string) error {
-	query := c.baseQuery()
+	query := c.zoneQuery(c.config.AvailabilityZone)
 	query.Set("volume_id", id)
-	return c.do(ctx, http.MethodDelete, volumePath, query, nil, nil)
+	if err := c.do(ctx, http.MethodDelete, volumePath, query, nil, nil); err != nil {
+		return err
+	}
+	if _, err := c.getVolumeByIDInZone(ctx, id, c.config.AvailabilityZone); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	return ErrUnavailable
 }
 
 func (c *Client) ResizeVolume(ctx context.Context, id string, sizeBytes int64, availabilityZone string) (int64, error) {

@@ -311,6 +311,14 @@ func TestCreateVolume_PostCreateEmptyList_RetriesUntilVisible(t *testing.T) {
 	}
 }
 
+func TestCreateVolume_ReconciledVolumeNotReadable_ReturnsUnavailable(t *testing.T) {
+	driver := New(testConfig(), unreadableCreatedVolumeCloud{}, mount.NewFake())
+	_, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("expected Unavailable, got %s (%v)", status.Code(err), err)
+	}
+}
+
 func TestCreateVolume_ReconcileDeletesAllCompatibleOrphans(t *testing.T) {
 	provider := newOrphanCreateCloud()
 	driver := New(testConfig(), provider, mount.NewFake())
@@ -762,6 +770,16 @@ func (d *dualCreateCloud) ListVolumes(_ context.Context, page cloud.Page) ([]clo
 	return volumes, "", nil
 }
 
+func (d *dualCreateCloud) GetVolumeByID(_ context.Context, id string) (*cloud.Volume, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	volume, ok := d.volumes[id]
+	if !ok {
+		return nil, cloud.ErrNotFound
+	}
+	return &volume, nil
+}
+
 func (d *dualCreateCloud) DeleteVolume(_ context.Context, id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -825,6 +843,15 @@ func (s *staggeredCreateCloud) ListVolumes(context.Context, cloud.Page) ([]cloud
 func (s *staggeredCreateCloud) CreateVolume(context.Context, cloud.VolumeSpec) (*cloud.Volume, error) {
 	return &cloud.Volume{
 		ID:               "vol-2",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+func (s *staggeredCreateCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
 		Name:             "data",
 		SizeBytes:        testGiB,
 		AvailabilityZone: "az1",
@@ -922,6 +949,43 @@ func (l *laggedCreateCloud) CreateVolume(context.Context, cloud.VolumeSpec) (*cl
 	}, nil
 }
 
+func (l *laggedCreateCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+type unreadableCreatedVolumeCloud struct {
+	cloud.Cloud
+}
+
+func (unreadableCreatedVolumeCloud) CreateVolume(context.Context, cloud.VolumeSpec) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+func (unreadableCreatedVolumeCloud) ListVolumes(context.Context, cloud.Page) ([]cloud.Volume, string, error) {
+	return []cloud.Volume{
+		{
+			ID:               "vol-1",
+			Name:             "data",
+			SizeBytes:        testGiB,
+			AvailabilityZone: "az1",
+		},
+	}, "", nil
+}
+
+func (unreadableCreatedVolumeCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return nil, cloud.ErrNotFound
+}
+
 type orphanCreateCloud struct {
 	cloud.Cloud
 	mu         sync.Mutex
@@ -952,6 +1016,15 @@ func (o *orphanCreateCloud) CreateVolume(context.Context, cloud.VolumeSpec) (*cl
 	o.created = true
 	return &cloud.Volume{
 		ID:               "vol-3",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+func (o *orphanCreateCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
 		Name:             "data",
 		SizeBytes:        testGiB,
 		AvailabilityZone: "az1",
@@ -997,6 +1070,15 @@ func (a *attachedOrphanCreateCloud) ListVolumes(context.Context, cloud.Page) ([]
 
 func (a *attachedOrphanCreateCloud) CreateVolume(context.Context, cloud.VolumeSpec) (*cloud.Volume, error) {
 	return nil, cloud.ErrAlreadyExists
+}
+
+func (a *attachedOrphanCreateCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
 }
 
 func (a *attachedOrphanCreateCloud) DeleteVolume(_ context.Context, id string) error {

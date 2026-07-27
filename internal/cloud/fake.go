@@ -95,6 +95,9 @@ func (f *Fake) ListVolumes(_ context.Context, page Page) ([]Volume, string, erro
 	defer f.mu.Unlock()
 	volumes := make([]Volume, 0, len(f.volumes))
 	for _, volume := range f.volumes {
+		if page.ID != "" && volume.ID != page.ID {
+			continue
+		}
 		if page.AvailabilityZone != "" && volume.AvailabilityZone != page.AvailabilityZone {
 			continue
 		}
