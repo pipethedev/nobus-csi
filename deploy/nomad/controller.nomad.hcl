@@ -33,9 +33,7 @@ job "nobus-csi-controller" {
         destination = "secrets/nobus.env"
         env         = true
         data        = <<EOH
-NOBUS_EMAIL={{ with nomadVar "nobus/csi" }}{{ .email }}{{ end }}
-NOBUS_PASSWORD={{ with nomadVar "nobus/csi" }}{{ .password }}{{ end }}
-NOBUS_TOKEN={{ with nomadVar "nobus/csi" }}{{ .token }}{{ end }}
+NOBUS_API_KEY={{ with nomadVar "nobus/csi" }}{{ .api_key }}{{ end }}
 EOH
       }
 

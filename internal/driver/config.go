@@ -28,9 +28,7 @@ type Config struct {
 	Endpoint               string
 	Mode                   Mode
 	APIURL                 string
-	Token                  string
-	Email                  string
-	Password               string
+	APIKey                 string
 	AllowFake              bool
 	ProjectID              string
 	AvailabilityZone       string
@@ -51,9 +49,7 @@ func ConfigFromEnv() Config {
 		Endpoint:               endpoint,
 		Mode:                   ModeAll,
 		APIURL:                 os.Getenv("NOBUS_API_URL"),
-		Token:                  os.Getenv("NOBUS_TOKEN"),
-		Email:                  os.Getenv("NOBUS_EMAIL"),
-		Password:               os.Getenv("NOBUS_PASSWORD"),
+		APIKey:                 os.Getenv("NOBUS_API_KEY"),
 		AllowFake:              os.Getenv("NOBUS_ALLOW_FAKE") == "true",
 		ProjectID:              os.Getenv("NOBUS_PROJECT_ID"),
 		AvailabilityZone:       os.Getenv("NOBUS_AVAILABILITY_ZONE"),

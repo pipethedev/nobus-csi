@@ -13,30 +13,27 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/brimble/nobus-csi/internal/metadata"
 )
 
 const (
-	volumePath       = "/api/v2/volume/"
-	volumeListPath   = "/api/v2/volume/list"
-	volumeExtendPath = "/api/v2/volume/extend"
-	snapshotPath     = "/api/v2/volume/snapshot"
-	snapshotListPath = "/api/v2/volume/snapshot/list"
-	loginPath        = "/api/v2/auth/login"
+	volumePath       = "/api/v3/volume/"
+	volumeListPath   = "/api/v3/volume/list"
+	volumeExtendPath = "/api/v3/volume/extend"
+	snapshotPath     = "/api/v3/volume/snapshot"
+	snapshotListPath = "/api/v3/volume/snapshot/list"
+	volumeAttachPath = "/api/v3/volume/attach"
+	volumeDetachPath = "/api/v3/volume/detach"
 	bytesPerGiB      = int64(1 << 30)
 	defaultTimeout   = 30 * time.Second
 	attachWait       = 3 * time.Minute
 	attachPoll       = 2 * time.Second
-	dashboardAPI     = "https://dashboard.nobus.io"
 )
 
 type Client struct {
 	base   *url.URL
-	mu     sync.Mutex
-	token  string
 	http   *http.Client
 	config ClientConfig
 	poll   time.Duration
@@ -44,9 +41,7 @@ type Client struct {
 
 type ClientConfig struct {
 	BaseURL          string
-	Token            string
-	Email            string
-	Password         string
+	APIKey           string
 	ProjectID        string
 	AvailabilityZone string
 	HTTPClient       *http.Client
@@ -60,14 +55,14 @@ func NewClient(config ClientConfig) (*Client, error) {
 	if base.Scheme == "" || base.Host == "" {
 		return nil, fmt.Errorf("nobus API URL must be absolute")
 	}
-	if config.Token == "" && (config.Email == "" || config.Password == "") {
-		return nil, fmt.Errorf("nobus token or email and password are required")
+	if config.APIKey == "" {
+		return nil, fmt.Errorf("nobus API key is required")
 	}
 	client := config.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: defaultTimeout}
 	}
-	return &Client{base: base, token: config.Token, http: client, config: config, poll: attachPoll}, nil
+	return &Client{base: base, http: client, config: config, poll: attachPoll}, nil
 }
 
 func (c *Client) CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, error) {
@@ -97,24 +92,22 @@ func (c *Client) GetVolumeByID(ctx context.Context, id string) (*Volume, error) 
 }
 
 func (c *Client) getVolumeByIDInZone(ctx context.Context, id string, availabilityZone string) (*Volume, error) {
-	volumes, _, err := c.ListVolumes(ctx, Page{ID: id, AvailabilityZone: cmp.Or(availabilityZone, c.config.AvailabilityZone)})
-	if err != nil {
+	query := c.zoneQuery(availabilityZone)
+	query.Set("volume_id", id)
+	var response volumeGetResponse
+	if err := c.do(ctx, http.MethodGet, volumePath, query, nil, decodeJSON(&response)); err != nil {
 		return nil, err
 	}
-	for _, volume := range volumes {
-		if volume.ID == id {
-			clone := volume
-			return &clone, nil
-		}
+	if response.Data == nil || response.Data.ID == "" {
+		return nil, ErrNotFound
 	}
-	return nil, ErrNotFound
+	volume := response.Data.toDomain()
+	volume.AvailabilityZone = query.Get("availability_zone")
+	return &volume, nil
 }
 
 func (c *Client) ListVolumes(ctx context.Context, page Page) ([]Volume, string, error) {
 	query := c.zoneQuery(page.AvailabilityZone)
-	if page.ID != "" {
-		query.Set("id", page.ID)
-	}
 	if page.Name != "" {
 		query.Set("name", page.Name)
 	}
@@ -183,9 +176,7 @@ func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string, 
 	if err != nil {
 		return "", err
 	}
-	// Nobus' public OpenAPI /api/v2/volume/attach currently fails for valid dashboard-compatible
-	// requests. Use the dashboard proxy until the provider fixes that endpoint.
-	if err := c.dashboardVolumeAction(ctx, "attach", payload); err != nil {
+	if err := c.do(ctx, http.MethodPost, volumeAttachPath, nil, payload, nil); err != nil {
 		return "", err
 	}
 	return c.waitAttachedDevice(ctx, volumeID, instanceID, cmp.Or(availabilityZone, c.config.AvailabilityZone))
@@ -228,34 +219,7 @@ func (c *Client) DetachVolume(ctx context.Context, volumeID, instanceID string, 
 	if err != nil {
 		return err
 	}
-	// Nobus' public OpenAPI /api/v2/volume/detach is paired with the broken attach endpoint.
-	// Use the dashboard proxy until the provider fixes that endpoint.
-	return c.dashboardVolumeAction(ctx, "detach", payload)
-}
-
-func (c *Client) dashboardVolumeAction(ctx context.Context, action string, payload []byte) error {
-	token, err := c.bearerToken(ctx)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, dashboardAPI+"/api/volumes/"+action, bytes.NewReader(payload))
-	if err != nil {
-		return fmt.Errorf("create Nobus dashboard request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.AddCookie(&http.Cookie{Name: "token", Value: token})
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("call Nobus dashboard API: %w", errors.Join(ErrUnavailable, err))
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= http.StatusBadRequest {
-		return mapHTTPError(resp)
-	}
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-		return fmt.Errorf("drain Nobus dashboard response: %w", err)
-	}
-	return nil
+	return c.do(ctx, http.MethodPost, volumeDetachPath, nil, payload, nil)
 }
 
 func (c *Client) CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapshot, error) {
@@ -333,106 +297,29 @@ func (c *Client) do(ctx context.Context, method string, path string, query url.V
 	if query != nil {
 		endpoint.RawQuery = query.Encode()
 	}
-	for attempt := 0; attempt < 2; attempt++ {
-		token, err := c.bearerToken(ctx)
-		if err != nil {
-			return err
-		}
-		req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), bytes.NewReader(body))
-		if err != nil {
-			return fmt.Errorf("create Nobus request: %w", err)
-		}
-		req.Header.Set("Authorization", "Bearer "+token)
-		if len(body) > 0 {
-			req.Header.Set("Content-Type", "application/json")
-		}
-		resp, err := c.http.Do(req)
-		if err != nil {
-			return fmt.Errorf("call Nobus API: %w", errors.Join(ErrUnavailable, err))
-		}
-		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 && c.canLogin() {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
-			c.clearToken(token)
-			continue
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode >= http.StatusBadRequest {
-			return mapHTTPError(resp)
-		}
-		if decode == nil {
-			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-				return fmt.Errorf("drain Nobus response: %w", err)
-			}
-			return nil
-		}
-		return decode(resp.Body)
-	}
-	return fmt.Errorf("refresh Nobus token: %w", ErrUnauthorized)
-}
-
-func (c *Client) bearerToken(ctx context.Context) (string, error) {
-	c.mu.Lock()
-	if c.token != "" {
-		token := c.token
-		c.mu.Unlock()
-		return token, nil
-	}
-	c.mu.Unlock()
-	token, err := c.login(ctx)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return fmt.Errorf("create Nobus request: %w", err)
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.token != "" {
-		return c.token, nil
+	req.Header.Set("Authorization", "Bearer "+c.config.APIKey)
+	if len(body) > 0 {
+		req.Header.Set("Content-Type", "application/json")
 	}
-	c.token = token
-	return token, nil
-}
-
-func (c *Client) clearToken(value string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.token == value {
-		c.token = ""
-	}
-}
-
-func (c *Client) canLogin() bool {
-	return c.config.Email != "" && c.config.Password != ""
-}
-
-func (c *Client) login(ctx context.Context) (string, error) {
-	payload, err := marshalJSON(loginRequest{
-		Email:    c.config.Email,
-		Password: c.config.Password,
-	})
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base.ResolveReference(&url.URL{Path: loginPath}).String(), bytes.NewReader(payload))
-	if err != nil {
-		return "", fmt.Errorf("create Nobus login request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("call Nobus login API: %w", errors.Join(ErrUnavailable, err))
+		return fmt.Errorf("call Nobus API: %w", errors.Join(ErrUnavailable, err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= http.StatusBadRequest {
-		return "", mapHTTPError(resp)
+		return mapHTTPError(resp)
 	}
-	var response loginResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-		return "", fmt.Errorf("decode Nobus login response: %w", err)
+	if decode == nil {
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			return fmt.Errorf("drain Nobus response: %w", err)
+		}
+		return nil
 	}
-	if response.Token == "" {
-		return "", fmt.Errorf("nobus login response missing token: %w", ErrUnauthorized)
-	}
-	return response.Token, nil
+	return decode(resp.Body)
 }
 
 func (c *Client) zoneQuery(availabilityZone string) url.Values {
@@ -453,7 +340,7 @@ func marshalJSON(body any) ([]byte, error) {
 func decodeJSON(target any) func(io.Reader) error {
 	return func(source io.Reader) error {
 		if err := json.NewDecoder(source).Decode(target); err != nil {
-			return fmt.Errorf("decode Nobus response: %w", err)
+			return fmt.Errorf("decode Nobus response: %w", errors.Join(ErrInvalid, err))
 		}
 		return nil
 	}
@@ -563,14 +450,14 @@ type snapshotRequest struct {
 	Metadata         map[string]string `json:"metadata,omitempty"`
 }
 
-type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
 type volumeResponse struct {
 	Status bool      `json:"status"`
 	Data   apiVolume `json:"data"`
+}
+
+type volumeGetResponse struct {
+	Status bool       `json:"status"`
+	Data   *apiVolume `json:"data"`
 }
 
 type volumeListResponse struct {
@@ -594,10 +481,6 @@ type snapshotListResponse struct {
 
 type errorResponse struct {
 	Message string `json:"message"`
-}
-
-type loginResponse struct {
-	Token string `json:"token"`
 }
 
 type apiVolume struct {

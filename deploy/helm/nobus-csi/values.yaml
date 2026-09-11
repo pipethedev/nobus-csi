@@ -19,9 +19,7 @@ nobus:
   projectId: ""
   availabilityZone: ""
   volumeType: ""
-  token: ""
-  email: ""
-  password: ""
+  apiKey: ""
   existingSecret: ""
   secretName: ""
 

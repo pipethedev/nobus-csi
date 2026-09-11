@@ -47,8 +47,7 @@ func run(config driver.Config) error {
 		"mode", config.Mode,
 		"endpoint", config.Endpoint,
 		"api_url_configured", config.APIURL != "",
-		"token_configured", config.Token != "",
-		"login_configured", config.Email != "" && config.Password != "",
+		"api_key_configured", config.APIKey != "",
 		"fake_provider_enabled", config.AllowFake,
 		"project_configured", config.ProjectID != "",
 		"availability_zone_configured", config.AvailabilityZone != "",
@@ -86,9 +85,7 @@ func providerFromConfig(config driver.Config) (cloud.Cloud, error) {
 	}
 	return cloud.NewClient(cloud.ClientConfig{
 		BaseURL:          config.APIURL,
-		Token:            config.Token,
-		Email:            config.Email,
-		Password:         config.Password,
+		APIKey:           config.APIKey,
 		ProjectID:        config.ProjectID,
 		AvailabilityZone: config.AvailabilityZone,
 	})

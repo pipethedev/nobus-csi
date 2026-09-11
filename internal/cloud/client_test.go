@@ -19,7 +19,7 @@ func TestClient_CreateVolume_UsesDocumentedEndpointAndAuth(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST, got %s", r.Method)
 		}
-		if r.Header.Get("Authorization") != "Bearer token" {
+		if r.Header.Get("Authorization") != "Bearer api-key" {
 			t.Fatalf("expected bearer auth, got %q", r.Header.Get("Authorization"))
 		}
 		var body volumeCreateRequest
@@ -83,21 +83,21 @@ func TestClient_CreateVolume_UsesRequestAvailabilityZone(t *testing.T) {
 	}
 }
 
-func TestClient_GetVolumeByID_UsesListEndpoint(t *testing.T) {
+func TestClient_GetVolumeByID_UsesDocumentedEndpoint(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path != volumeListPath {
-			t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
+		if r.URL.Path != volumePath {
+			t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
 		}
-		if r.URL.Query().Get("id") != "vol-1" {
-			t.Fatalf("expected id filter vol-1, got %q", r.URL.Query().Get("id"))
+		if r.URL.Query().Get("volume_id") != "vol-1" {
+			t.Fatalf("expected volume_id vol-1, got %q", r.URL.Query().Get("volume_id"))
 		}
-		return jsonOK(t, volumeListWith(apiVolume{
+		return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{
 			ID:               "vol-1",
 			Name:             "data",
 			Size:             1,
 			Status:           VolumeStatusAvailable,
 			AvailabilityZone: "nova",
-		})), nil
+		}}), nil
 	})
 	client := newTestClient(t, transport)
 	volume, err := client.GetVolumeByID(context.Background(), "vol-1")
@@ -109,127 +109,53 @@ func TestClient_GetVolumeByID_UsesListEndpoint(t *testing.T) {
 	}
 }
 
-func TestClient_LoginWithEmailPassword_UsesReturnedBearerToken(t *testing.T) {
-	requests := 0
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		requests++
-		switch requests {
-		case 1:
-			if r.URL.Path != loginPath {
-				t.Fatalf("expected path %s, got %s", loginPath, r.URL.Path)
-			}
-			if r.Header.Get("Authorization") != "" {
-				t.Fatalf("expected login without authorization header")
-			}
-			var body loginRequest
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode login request: %v", err)
-			}
-			if body.Email != "hello@brimble.app" || body.Password != "secret" {
-				t.Fatalf("unexpected login body: %+v", body)
-			}
-			return responseWithRawBody(t, `{"token":"login-token"}`), nil
-		case 2:
-			if r.URL.Path != volumeListPath {
-				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
-			}
-			if r.Header.Get("Authorization") != "Bearer login-token" {
-				t.Fatalf("expected login bearer auth, got %q", r.Header.Get("Authorization"))
-			}
-			return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1", Size: 1})), nil
-		default:
-			t.Fatalf("unexpected request %d", requests)
-			return nil, nil
+func TestClient_GetVolumeByID_MissingDataReturnsNotFound(t *testing.T) {
+	for _, body := range []string{`{"status":true}`, `{"status":true,"data":null}`} {
+		transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return responseWithRawBody(t, body), nil
+		})
+		client := newTestClient(t, transport)
+		if _, err := client.GetVolumeByID(context.Background(), "vol-1"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("expected ErrNotFound for %s, got %v", body, err)
 		}
-	})
-	client, err := NewClient(ClientConfig{
-		BaseURL:          "https://cloud-api.nobus.io",
-		Email:            "hello@brimble.app",
-		Password:         "secret",
-		ProjectID:        "project",
-		AvailabilityZone: "az1",
-		HTTPClient:       &http.Client{Transport: transport},
-	})
-	if err != nil {
-		t.Fatalf("create client: %v", err)
-	}
-	if _, err := client.GetVolumeByID(context.Background(), "vol-1"); err != nil {
-		t.Fatalf("get volume: %v", err)
 	}
 }
 
-func TestClient_TokenSkipsLogin(t *testing.T) {
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path == loginPath {
-			t.Fatalf("did not expect login request")
+func TestClient_GetVolumeByID_InvalidDataReturnsInvalid(t *testing.T) {
+	for _, body := range []string{`{"status":true,"data":"volume"}`, `{"status":true,"data":[]}`} {
+		transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return responseWithRawBody(t, body), nil
+		})
+		client := newTestClient(t, transport)
+		if _, err := client.GetVolumeByID(context.Background(), "vol-1"); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("expected ErrInvalid for %s, got %v", body, err)
 		}
-		if r.Header.Get("Authorization") != "Bearer provided-token" {
-			t.Fatalf("expected provided bearer auth, got %q", r.Header.Get("Authorization"))
-		}
-		return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1", Size: 1})), nil
-	})
-	client, err := NewClient(ClientConfig{
-		BaseURL:          "https://cloud-api.nobus.io",
-		Token:            "provided-token",
-		Email:            "hello@brimble.app",
-		Password:         "secret",
-		ProjectID:        "project",
-		AvailabilityZone: "az1",
-		HTTPClient:       &http.Client{Transport: transport},
-	})
-	if err != nil {
-		t.Fatalf("create client: %v", err)
-	}
-	if _, err := client.GetVolumeByID(context.Background(), "vol-1"); err != nil {
-		t.Fatalf("get volume: %v", err)
 	}
 }
 
-func TestClient_UnauthorizedRefreshesLoginToken(t *testing.T) {
-	requests := 0
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		requests++
-		switch requests {
-		case 1:
-			if r.URL.Path != volumeListPath {
-				t.Fatalf("expected volume request, got %s", r.URL.Path)
-			}
-			if r.Header.Get("Authorization") != "Bearer expired-token" {
-				t.Fatalf("expected expired bearer auth, got %q", r.Header.Get("Authorization"))
-			}
-			return jsonErrorResponse(t, http.StatusUnauthorized, errorResponse{Message: "token expired"}), nil
-		case 2:
-			if r.URL.Path != loginPath {
-				t.Fatalf("expected login request, got %s", r.URL.Path)
-			}
-			return responseWithRawBody(t, `{"token":"fresh-token"}`), nil
-		case 3:
-			if r.URL.Path != volumeListPath {
-				t.Fatalf("expected retried volume request, got %s", r.URL.Path)
-			}
-			if r.Header.Get("Authorization") != "Bearer fresh-token" {
-				t.Fatalf("expected fresh bearer auth, got %q", r.Header.Get("Authorization"))
-			}
-			return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1", Size: 1})), nil
-		default:
-			t.Fatalf("unexpected request %d", requests)
-			return nil, nil
-		}
-	})
-	client, err := NewClient(ClientConfig{
+func TestNewClient_MissingAPIKeyReturnsError(t *testing.T) {
+	_, err := NewClient(ClientConfig{
 		BaseURL:          "https://cloud-api.nobus.io",
-		Token:            "expired-token",
-		Email:            "hello@brimble.app",
-		Password:         "secret",
 		ProjectID:        "project",
 		AvailabilityZone: "az1",
-		HTTPClient:       &http.Client{Transport: transport},
 	})
-	if err != nil {
-		t.Fatalf("create client: %v", err)
+	if err == nil {
+		t.Fatal("expected missing API key error")
 	}
-	if _, err := client.GetVolumeByID(context.Background(), "vol-1"); err != nil {
-		t.Fatalf("get volume: %v", err)
+}
+
+func TestClient_UnauthorizedReturnsWithoutRetry(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return jsonErrorResponse(t, http.StatusUnauthorized, errorResponse{Message: "invalid API key"}), nil
+	})
+	client := newTestClient(t, transport)
+	if _, err := client.GetVolumeByID(context.Background(), "vol-1"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expected ErrUnauthorized, got %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("expected one request, got %d", requests)
 	}
 }
 
@@ -247,10 +173,10 @@ func TestClient_DeleteVolume_SendsAvailabilityZone(t *testing.T) {
 			}
 			return jsonOK(t, statusOnlyResponse{Status: true}), nil
 		case 2:
-			if r.URL.Path != volumeListPath {
-				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
+			if r.URL.Path != volumePath {
+				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
 			}
-			return jsonOK(t, volumeListWith()), nil
+			return jsonOK(t, volumeGetResponse{Status: true}), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -269,7 +195,7 @@ func TestClient_DeleteVolume_StillListedReturnsUnavailable(t *testing.T) {
 		if requests == 1 {
 			return jsonOK(t, statusOnlyResponse{Status: true}), nil
 		}
-		return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1"})), nil
+		return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{ID: "vol-1"}}), nil
 	})
 	client := newTestClient(t, transport)
 	err := client.DeleteVolume(context.Background(), "vol-1")
@@ -284,15 +210,14 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 		requests++
 		switch requests {
 		case 1:
-			if r.URL.String() != dashboardAPI+"/api/volumes/attach" {
-				t.Fatalf("expected dashboard attach URL, got %s", r.URL.String())
+			if r.URL.Path != volumeAttachPath {
+				t.Fatalf("expected path %s, got %s", volumeAttachPath, r.URL.Path)
 			}
-			cookie, err := r.Cookie("token")
-			if err != nil {
-				t.Fatalf("expected dashboard token cookie: %v", err)
+			if r.Header.Get("Authorization") != "Bearer api-key" {
+				t.Fatalf("expected API key bearer auth, got %q", r.Header.Get("Authorization"))
 			}
-			if cookie.Value != "token" {
-				t.Fatalf("expected token cookie, got %q", cookie.Value)
+			if r.Header.Get("Cookie") != "" {
+				t.Fatalf("expected no cookie, got %q", r.Header.Get("Cookie"))
 			}
 			var body attachVolumeRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -303,18 +228,18 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 			}
 			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
 		case 2:
-			if r.URL.Path != volumeListPath {
-				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
+			if r.URL.Path != volumePath {
+				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
 			}
 			if r.URL.Query().Get("availability_zone") != "az2" {
 				t.Fatalf("expected az2 lookup zone, got %q", r.URL.Query().Get("availability_zone"))
 			}
-			return jsonOK(t, volumeListWith(apiVolume{
+			return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{
 				ID: "vol-1",
 				Attachments: []apiAttachment{
 					{ServerID: "server-1", Device: "/dev/vdb"},
 				},
-			})), nil
+			}}), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -336,26 +261,26 @@ func TestClient_AttachVolume_WaitsForDevice(t *testing.T) {
 		requests++
 		switch requests {
 		case 1:
-			if r.URL.String() != dashboardAPI+"/api/volumes/attach" {
-				t.Fatalf("expected dashboard attach URL, got %s", r.URL.String())
+			if r.URL.Path != volumeAttachPath {
+				t.Fatalf("expected path %s, got %s", volumeAttachPath, r.URL.Path)
 			}
 			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
 		case 2:
-			return jsonOK(t, volumeListWith(apiVolume{
+			return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{
 				ID:     "vol-1",
 				Status: VolumeStatusCreating,
 				Attachments: []apiAttachment{
 					{ServerID: "server-1"},
 				},
-			})), nil
+			}}), nil
 		case 3:
-			return jsonOK(t, volumeListWith(apiVolume{
+			return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{
 				ID:     "vol-1",
 				Status: VolumeStatusInUse,
 				Attachments: []apiAttachment{
 					{ServerID: "server-1", Device: "/dev/vdc"},
 				},
-			})), nil
+			}}), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -377,8 +302,8 @@ func TestClient_AttachVolume_PostAttachLookupFailure_ReturnsError(t *testing.T) 
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
 		if requests == 1 {
-			if r.URL.String() != dashboardAPI+"/api/volumes/attach" {
-				t.Fatalf("expected dashboard attach URL, got %s", r.URL.String())
+			if r.URL.Path != volumeAttachPath {
+				t.Fatalf("expected path %s, got %s", volumeAttachPath, r.URL.Path)
 			}
 			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
 		}
@@ -391,15 +316,18 @@ func TestClient_AttachVolume_PostAttachLookupFailure_ReturnsError(t *testing.T) 
 	}
 }
 
-func TestClient_DetachVolume_UsesDashboardAPI(t *testing.T) {
+func TestClient_DetachVolume_UsesDocumentedEndpoint(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
-		if r.URL.String() != dashboardAPI+"/api/volumes/detach" {
-			t.Fatalf("expected dashboard detach URL, got %s", r.URL.String())
+		if r.URL.Path != volumeDetachPath {
+			t.Fatalf("expected path %s, got %s", volumeDetachPath, r.URL.Path)
 		}
-		if _, err := r.Cookie("token"); err != nil {
-			t.Fatalf("expected dashboard token cookie: %v", err)
+		if r.Header.Get("Authorization") != "Bearer api-key" {
+			t.Fatalf("expected API key bearer auth, got %q", r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("Cookie") != "" {
+			t.Fatalf("expected no cookie, got %q", r.Header.Get("Cookie"))
 		}
 		return responseWithRawBody(t, `{"status":true,"data":"Volume detached successfully"}`), nil
 	})
@@ -462,13 +390,13 @@ func TestClient_ResizeVolume_ReturnsProviderConfirmedSize(t *testing.T) {
 			}
 			return jsonOK(t, statusOnlyResponse{Status: true}), nil
 		case 2:
-			if r.URL.Path != volumeListPath {
-				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
+			if r.URL.Path != volumePath {
+				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
 			}
 			if r.URL.Query().Get("availability_zone") != "az2" {
 				t.Fatalf("expected az2 lookup zone, got %q", r.URL.Query().Get("availability_zone"))
 			}
-			return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1", Size: 3})), nil
+			return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{ID: "vol-1", Size: 3}}), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -708,7 +636,7 @@ func newTestClient(t *testing.T, transport http.RoundTripper) *Client {
 	t.Helper()
 	client, err := NewClient(ClientConfig{
 		BaseURL:          "https://cloud-api.nobus.io",
-		Token:            "token",
+		APIKey:           "api-key",
 		ProjectID:        "project",
 		AvailabilityZone: "az1",
 		HTTPClient:       &http.Client{Transport: transport},
