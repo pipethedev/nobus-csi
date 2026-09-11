@@ -2,6 +2,7 @@ package cloud
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,8 +22,6 @@ import (
 const (
 	volumePath       = "/api/v2/volume/"
 	volumeListPath   = "/api/v2/volume/list"
-	volumeAttachPath = "/api/v2/volume/attach"
-	volumeDetachPath = "/api/v2/volume/detach"
 	volumeExtendPath = "/api/v2/volume/extend"
 	snapshotPath     = "/api/v2/volume/snapshot"
 	snapshotListPath = "/api/v2/volume/snapshot/list"
@@ -72,7 +72,7 @@ func NewClient(config ClientConfig) (*Client, error) {
 
 func (c *Client) CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, error) {
 	var response volumeResponse
-	payload, err := encodeBody(volumeCreateRequest{
+	payload, err := marshalJSON(volumeCreateRequest{
 		Size:             bytesToGiB(spec.SizeBytes),
 		Name:             spec.Name,
 		VolumeType:       spec.Type,
@@ -84,13 +84,12 @@ func (c *Client) CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, er
 	if err != nil {
 		return nil, err
 	}
-	err = c.do(ctx, http.MethodPost, volumePath, nil, payload, decodeJSON(&response))
-	if err != nil {
+	if err := c.do(ctx, http.MethodPost, volumePath, nil, payload, decodeJSON(&response)); err != nil {
 		return nil, err
 	}
 	volume := response.Data.toDomain()
 	volume.AvailabilityZone = spec.AvailabilityZone
-	return volume, nil
+	return &volume, nil
 }
 
 func (c *Client) GetVolumeByID(ctx context.Context, id string) (*Volume, error) {
@@ -98,8 +97,7 @@ func (c *Client) GetVolumeByID(ctx context.Context, id string) (*Volume, error) 
 }
 
 func (c *Client) getVolumeByIDInZone(ctx context.Context, id string, availabilityZone string) (*Volume, error) {
-	zone := firstValue(availabilityZone, c.config.AvailabilityZone)
-	volumes, _, err := c.ListVolumes(ctx, Page{ID: id, AvailabilityZone: zone})
+	volumes, _, err := c.ListVolumes(ctx, Page{ID: id, AvailabilityZone: cmp.Or(availabilityZone, c.config.AvailabilityZone)})
 	if err != nil {
 		return nil, err
 	}
@@ -112,22 +110,8 @@ func (c *Client) getVolumeByIDInZone(ctx context.Context, id string, availabilit
 	return nil, ErrNotFound
 }
 
-func (c *Client) GetVolumeByName(ctx context.Context, name string, availabilityZone string) (*Volume, error) {
-	volumes, _, err := c.ListVolumes(ctx, Page{Name: name, AvailabilityZone: availabilityZone})
-	if err != nil {
-		return nil, err
-	}
-	for _, volume := range volumes {
-		if volume.Name == name {
-			clone := volume
-			return &clone, nil
-		}
-	}
-	return nil, ErrNotFound
-}
-
 func (c *Client) ListVolumes(ctx context.Context, page Page) ([]Volume, string, error) {
-	query := c.zoneQuery(firstValue(page.AvailabilityZone, c.config.AvailabilityZone))
+	query := c.zoneQuery(page.AvailabilityZone)
 	if page.ID != "" {
 		query.Set("id", page.ID)
 	}
@@ -145,17 +129,16 @@ func (c *Client) ListVolumes(ctx context.Context, page Page) ([]Volume, string, 
 		if zone != "" {
 			domain.AvailabilityZone = zone
 		}
-		volumes = append(volumes, *domain)
+		volumes = append(volumes, domain)
 	}
-	paged, token, err := paginate(volumes, page)
-	if err != nil {
-		return nil, "", err
-	}
-	return paged, token, nil
+	slices.SortFunc(volumes, func(left Volume, right Volume) int {
+		return cmp.Compare(left.ID, right.ID)
+	})
+	return paginate(volumes, page)
 }
 
 func (c *Client) DeleteVolume(ctx context.Context, id string) error {
-	query := c.zoneQuery(c.config.AvailabilityZone)
+	query := c.zoneQuery("")
 	query.Set("volume_id", id)
 	if err := c.do(ctx, http.MethodDelete, volumePath, query, nil, nil); err != nil {
 		return err
@@ -170,19 +153,17 @@ func (c *Client) DeleteVolume(ctx context.Context, id string) error {
 }
 
 func (c *Client) ResizeVolume(ctx context.Context, id string, sizeBytes int64, availabilityZone string) (int64, error) {
-	zone := firstValue(availabilityZone, c.config.AvailabilityZone)
-	size := bytesToGiB(sizeBytes)
-	payload, err := encodeBody(extendVolumeRequest{
+	zone := cmp.Or(availabilityZone, c.config.AvailabilityZone)
+	payload, err := marshalJSON(extendVolumeRequest{
 		ProjectID:        c.config.ProjectID,
 		AvailabilityZone: zone,
 		VolumeID:         id,
-		NewSize:          size,
+		NewSize:          bytesToGiB(sizeBytes),
 	})
 	if err != nil {
 		return 0, err
 	}
-	err = c.do(ctx, http.MethodPost, volumeExtendPath, nil, payload, nil)
-	if err != nil {
+	if err := c.do(ctx, http.MethodPost, volumeExtendPath, nil, payload, nil); err != nil {
 		return 0, err
 	}
 	volume, err := c.getVolumeByIDInZone(ctx, id, zone)
@@ -193,34 +174,34 @@ func (c *Client) ResizeVolume(ctx context.Context, id string, sizeBytes int64, a
 }
 
 func (c *Client) AttachVolume(ctx context.Context, volumeID, instanceID string, availabilityZone string) (string, error) {
-	zone := firstValue(availabilityZone, c.config.AvailabilityZone)
-	payload, err := encodeBody(attachVolumeRequest{
+	payload, err := marshalJSON(attachVolumeRequest{
 		ProjectID:        c.config.ProjectID,
-		AvailabilityZone: zone,
+		AvailabilityZone: cmp.Or(availabilityZone, c.config.AvailabilityZone),
 		ServerID:         instanceID,
 		VolumeID:         volumeID,
 	})
 	if err != nil {
 		return "", err
 	}
-	// Nobus' public OpenAPI attach endpoint currently fails for valid dashboard-compatible
-	// requests. Use the dashboard proxy directly until the provider fixes /api/v2/volume/attach.
-	// if err := c.do(ctx, http.MethodPost, volumeAttachPath, nil, payload, decodeJSON(&response)); err != nil { ... }
+	// Nobus' public OpenAPI /api/v2/volume/attach currently fails for valid dashboard-compatible
+	// requests. Use the dashboard proxy until the provider fixes that endpoint.
 	if err := c.dashboardVolumeAction(ctx, "attach", payload); err != nil {
 		return "", err
 	}
-	return c.waitAttachedDevice(ctx, volumeID, instanceID, zone)
+	return c.waitAttachedDevice(ctx, volumeID, instanceID, cmp.Or(availabilityZone, c.config.AvailabilityZone))
 }
 
 func (c *Client) waitAttachedDevice(ctx context.Context, volumeID string, instanceID string, zone string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, attachWait)
 	defer cancel()
+	timer := time.NewTimer(0)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	defer timer.Stop()
 	for {
 		volume, err := c.getVolumeByIDInZone(ctx, volumeID, zone)
 		if err != nil {
-			if errors.Is(err, ErrNotFound) {
-				return "", err
-			}
 			return "", fmt.Errorf("wait for attached volume %s: %w", volumeID, err)
 		}
 		for _, attachment := range volume.Attachments {
@@ -228,10 +209,9 @@ func (c *Client) waitAttachedDevice(ctx context.Context, volumeID string, instan
 				return attachment.DevicePath, nil
 			}
 		}
-		timer := time.NewTimer(c.poll)
+		timer.Reset(c.poll)
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			return "", fmt.Errorf("attached volume %s has no device for instance %s: %w", volumeID, instanceID, ErrUnavailable)
 		case <-timer.C:
 		}
@@ -239,18 +219,17 @@ func (c *Client) waitAttachedDevice(ctx context.Context, volumeID string, instan
 }
 
 func (c *Client) DetachVolume(ctx context.Context, volumeID, instanceID string, availabilityZone string) error {
-	payload, err := encodeBody(detachVolumeRequest{
+	payload, err := marshalJSON(attachVolumeRequest{
 		ProjectID:        c.config.ProjectID,
-		AvailabilityZone: firstValue(availabilityZone, c.config.AvailabilityZone),
+		AvailabilityZone: cmp.Or(availabilityZone, c.config.AvailabilityZone),
 		ServerID:         instanceID,
 		VolumeID:         volumeID,
 	})
 	if err != nil {
 		return err
 	}
-	// Nobus' public OpenAPI detach endpoint is paired with the broken attach endpoint above.
-	// Use the dashboard proxy directly until the provider fixes /api/v2/volume/detach.
-	// if err := c.do(ctx, http.MethodPost, volumeDetachPath, nil, payload, nil); err != nil { ... }
+	// Nobus' public OpenAPI /api/v2/volume/detach is paired with the broken attach endpoint.
+	// Use the dashboard proxy until the provider fixes that endpoint.
 	return c.dashboardVolumeAction(ctx, "detach", payload)
 }
 
@@ -259,8 +238,7 @@ func (c *Client) dashboardVolumeAction(ctx context.Context, action string, paylo
 	if err != nil {
 		return err
 	}
-	endpoint := dashboardAPI + "/api/volumes/" + action
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, dashboardAPI+"/api/volumes/"+action, bytes.NewReader(payload))
 	if err != nil {
 		return fmt.Errorf("create Nobus dashboard request: %w", err)
 	}
@@ -268,14 +246,13 @@ func (c *Client) dashboardVolumeAction(ctx context.Context, action string, paylo
 	req.AddCookie(&http.Cookie{Name: "token", Value: token})
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("call Nobus dashboard API: %w", ErrUnavailable)
+		return fmt.Errorf("call Nobus dashboard API: %w", errors.Join(ErrUnavailable, err))
 	}
-	defer closeBody(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= http.StatusBadRequest {
 		return mapHTTPError(resp)
 	}
-	_, err = io.Copy(io.Discard, resp.Body)
-	if err != nil {
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 		return fmt.Errorf("drain Nobus dashboard response: %w", err)
 	}
 	return nil
@@ -283,7 +260,7 @@ func (c *Client) dashboardVolumeAction(ctx context.Context, action string, paylo
 
 func (c *Client) CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapshot, error) {
 	var response snapshotResponse
-	payload, err := encodeBody(snapshotRequest{
+	payload, err := marshalJSON(snapshotRequest{
 		VolumeID:         spec.VolumeID,
 		Name:             spec.Name,
 		ProjectID:        spec.ProjectID,
@@ -294,11 +271,14 @@ func (c *Client) CreateSnapshot(ctx context.Context, spec SnapshotSpec) (*Snapsh
 	if err != nil {
 		return nil, err
 	}
-	err = c.do(ctx, http.MethodPost, snapshotPath, nil, payload, decodeJSON(&response))
+	if err := c.do(ctx, http.MethodPost, snapshotPath, nil, payload, decodeJSON(&response)); err != nil {
+		return nil, err
+	}
+	snapshot, err := response.Data.toDomain()
 	if err != nil {
 		return nil, err
 	}
-	return response.Data.toDomain(), nil
+	return &snapshot, nil
 }
 
 func (c *Client) DeleteSnapshot(ctx context.Context, id string, availabilityZone string) error {
@@ -308,7 +288,7 @@ func (c *Client) DeleteSnapshot(ctx context.Context, id string, availabilityZone
 }
 
 func (c *Client) ListSnapshots(ctx context.Context, page Page) ([]Snapshot, string, error) {
-	query := c.zoneQuery(firstValue(page.AvailabilityZone, c.config.AvailabilityZone))
+	query := c.zoneQuery(page.AvailabilityZone)
 	if page.Name != "" {
 		query.Set("name", page.Name)
 	}
@@ -318,22 +298,27 @@ func (c *Client) ListSnapshots(ctx context.Context, page Page) ([]Snapshot, stri
 	}
 	snapshots := make([]Snapshot, 0, len(response.Data.Items))
 	for _, snapshot := range response.Data.Items {
-		domain := snapshot.toDomain()
+		domain, err := snapshot.toDomain()
+		if err != nil {
+			return nil, "", err
+		}
 		if domain.AvailabilityZone == "" {
 			domain.AvailabilityZone = query.Get("availability_zone")
 		}
-		snapshots = append(snapshots, *domain)
+		snapshots = append(snapshots, domain)
 	}
-	paged, token, err := paginate(snapshots, page)
-	if err != nil {
-		return nil, "", err
-	}
-	return paged, token, nil
+	slices.SortFunc(snapshots, func(left Snapshot, right Snapshot) int {
+		return cmp.Compare(left.ID, right.ID)
+	})
+	return paginate(snapshots, page)
 }
 
 func (c *Client) GetInstanceMetadata(ctx context.Context) (*InstanceMetadata, error) {
 	instance, err := metadata.ReadCloudInit(ctx)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("read Nobus instance metadata: %w: %w", err, ErrUnavailable)
 	}
 	return &InstanceMetadata{
@@ -363,27 +348,25 @@ func (c *Client) do(ctx context.Context, method string, path string, query url.V
 		}
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return fmt.Errorf("call Nobus API: %w", ErrUnavailable)
+			return fmt.Errorf("call Nobus API: %w", errors.Join(ErrUnavailable, err))
 		}
 		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 && c.canLogin() {
 			_, _ = io.Copy(io.Discard, resp.Body)
-			closeBody(resp.Body)
+			_ = resp.Body.Close()
 			c.clearToken(token)
 			continue
 		}
-		defer closeBody(resp.Body)
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode >= http.StatusBadRequest {
 			return mapHTTPError(resp)
 		}
 		if decode == nil {
-			_, err := io.Copy(io.Discard, resp.Body)
-			if err != nil {
+			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
 				return fmt.Errorf("drain Nobus response: %w", err)
 			}
 			return nil
 		}
-		err = decode(resp.Body)
-		return err
+		return decode(resp.Body)
 	}
 	return fmt.Errorf("refresh Nobus token: %w", ErrUnauthorized)
 }
@@ -422,24 +405,23 @@ func (c *Client) canLogin() bool {
 }
 
 func (c *Client) login(ctx context.Context) (string, error) {
-	payload, err := encodeBody(loginRequest{
+	payload, err := marshalJSON(loginRequest{
 		Email:    c.config.Email,
 		Password: c.config.Password,
 	})
 	if err != nil {
 		return "", err
 	}
-	endpoint := c.base.ResolveReference(&url.URL{Path: loginPath})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base.ResolveReference(&url.URL{Path: loginPath}).String(), bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("create Nobus login request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("call Nobus login API: %w", ErrUnavailable)
+		return "", fmt.Errorf("call Nobus login API: %w", errors.Join(ErrUnavailable, err))
 	}
-	defer closeBody(resp.Body)
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= http.StatusBadRequest {
 		return "", mapHTTPError(resp)
 	}
@@ -453,31 +435,22 @@ func (c *Client) login(ctx context.Context) (string, error) {
 	return response.Token, nil
 }
 
-func closeBody(body io.Closer) {
-	_ = body.Close()
-}
-
-func (c *Client) baseQuery() url.Values {
+func (c *Client) zoneQuery(availabilityZone string) url.Values {
 	query := url.Values{}
 	query.Set("project_id", c.config.ProjectID)
+	query.Set("availability_zone", cmp.Or(availabilityZone, c.config.AvailabilityZone))
 	return query
 }
 
-func (c *Client) zoneQuery(availabilityZone string) url.Values {
-	query := c.baseQuery()
-	query.Set("availability_zone", firstValue(availabilityZone, c.config.AvailabilityZone))
-	return query
-}
-
-func encodeBody(body requestBody) ([]byte, error) {
-	var buffer bytes.Buffer
-	if err := json.NewEncoder(&buffer).Encode(body); err != nil {
+func marshalJSON(body any) ([]byte, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
 		return nil, fmt.Errorf("encode Nobus request: %w", err)
 	}
-	return buffer.Bytes(), nil
+	return data, nil
 }
 
-func decodeJSON(target responseBody) func(io.Reader) error {
+func decodeJSON(target any) func(io.Reader) error {
 	return func(source io.Reader) error {
 		if err := json.NewDecoder(source).Decode(target); err != nil {
 			return fmt.Errorf("decode Nobus response: %w", err)
@@ -489,16 +462,13 @@ func decodeJSON(target responseBody) func(io.Reader) error {
 func mapHTTPError(resp *http.Response) error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("read Nobus error response: %w", ErrUnavailable)
+		return fmt.Errorf("read Nobus error response: %w", errors.Join(ErrUnavailable, err))
 	}
 	var apiErr errorResponse
 	if len(body) > 0 {
 		_ = json.Unmarshal(body, &apiErr)
 	}
-	message := apiErr.Message
-	if message == "" {
-		message = http.StatusText(resp.StatusCode)
-	}
+	message := cmp.Or(apiErr.Message, http.StatusText(resp.StatusCode))
 	switch resp.StatusCode {
 	case http.StatusNotFound:
 		return fmt.Errorf("%s: %w", message, ErrNotFound)
@@ -541,38 +511,6 @@ func bytesToGiB(sizeBytes int64) int {
 	return int((sizeBytes + bytesPerGiB - 1) / bytesPerGiB)
 }
 
-func decodeVolume(data json.RawMessage) (*apiVolume, error) {
-	var volume apiVolume
-	if err := json.Unmarshal(data, &volume); err == nil && volume.ID != "" {
-		return &volume, nil
-	}
-	var wrapped struct {
-		Volume apiVolume   `json:"volume"`
-		Item   apiVolume   `json:"item"`
-		Items  []apiVolume `json:"items"`
-	}
-	if err := json.Unmarshal(data, &wrapped); err != nil {
-		return nil, fmt.Errorf("decode Nobus volume payload: %w", err)
-	}
-	if wrapped.Volume.ID != "" {
-		return &wrapped.Volume, nil
-	}
-	if wrapped.Item.ID != "" {
-		return &wrapped.Item, nil
-	}
-	if len(wrapped.Items) > 0 && wrapped.Items[0].ID != "" {
-		return &wrapped.Items[0], nil
-	}
-	return nil, ErrNotFound
-}
-
-func firstValue(value string, fallback string) string {
-	if value != "" {
-		return value
-	}
-	return fallback
-}
-
 func paginate[T any](items []T, page Page) ([]T, string, error) {
 	start := 0
 	if page.Token != "" {
@@ -602,8 +540,6 @@ type volumeCreateRequest struct {
 	ProjectID        string            `json:"project_id"`
 }
 
-func (volumeCreateRequest) request() {}
-
 type attachVolumeRequest struct {
 	ProjectID        string `json:"project_id"`
 	AvailabilityZone string `json:"availability_zone"`
@@ -611,18 +547,12 @@ type attachVolumeRequest struct {
 	VolumeID         string `json:"volume_id"`
 }
 
-func (attachVolumeRequest) request() {}
-
-type detachVolumeRequest = attachVolumeRequest
-
 type extendVolumeRequest struct {
 	ProjectID        string `json:"project_id"`
 	AvailabilityZone string `json:"availability_zone"`
 	VolumeID         string `json:"volume_id"`
 	NewSize          int    `json:"new_size"`
 }
-
-func (extendVolumeRequest) request() {}
 
 type snapshotRequest struct {
 	VolumeID         string            `json:"volume_id"`
@@ -633,36 +563,15 @@ type snapshotRequest struct {
 	Metadata         map[string]string `json:"metadata,omitempty"`
 }
 
-func (snapshotRequest) request() {}
-
 type loginRequest struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
-}
-
-func (loginRequest) request() {}
-
-type requestBody interface {
-	request()
-}
-
-type responseBody interface {
-	response()
 }
 
 type volumeResponse struct {
 	Status bool      `json:"status"`
 	Data   apiVolume `json:"data"`
 }
-
-func (*volumeResponse) response() {}
-
-type genericVolumeResponse struct {
-	Status bool            `json:"status"`
-	Data   json.RawMessage `json:"data"`
-}
-
-func (*genericVolumeResponse) response() {}
 
 type volumeListResponse struct {
 	Status bool `json:"status"`
@@ -671,14 +580,10 @@ type volumeListResponse struct {
 	} `json:"data"`
 }
 
-func (*volumeListResponse) response() {}
-
 type snapshotResponse struct {
 	Status bool        `json:"status"`
 	Data   apiSnapshot `json:"data"`
 }
-
-func (*snapshotResponse) response() {}
 
 type snapshotListResponse struct {
 	Status bool `json:"status"`
@@ -686,8 +591,6 @@ type snapshotListResponse struct {
 		Items []apiSnapshot `json:"items"`
 	} `json:"data"`
 }
-
-func (*snapshotListResponse) response() {}
 
 type errorResponse struct {
 	Message string `json:"message"`
@@ -709,7 +612,7 @@ type apiVolume struct {
 	Attachments      []apiAttachment   `json:"attachments"`
 }
 
-func (v apiVolume) toDomain() *Volume {
+func (v apiVolume) toDomain() Volume {
 	attachments := make([]Attachment, 0, len(v.Attachments))
 	for _, attachment := range v.Attachments {
 		attachments = append(attachments, Attachment{
@@ -717,7 +620,7 @@ func (v apiVolume) toDomain() *Volume {
 			DevicePath: attachment.Device,
 		})
 	}
-	return &Volume{
+	return Volume{
 		ID:               v.ID,
 		Name:             v.Name,
 		SizeBytes:        int64(v.Size) * bytesPerGiB,
@@ -746,28 +649,32 @@ type apiSnapshot struct {
 	Metadata         map[string]string `json:"metadata"`
 }
 
-func (s apiSnapshot) toDomain() *Snapshot {
-	return &Snapshot{
+func (s apiSnapshot) toDomain() (Snapshot, error) {
+	createdAt, err := parseNobusTime(s.CreatedAt)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{
 		ID:               s.ID,
 		Name:             s.Name,
 		VolumeID:         s.VolumeID,
 		SizeBytes:        int64(s.Size) * bytesPerGiB,
 		Status:           s.Status,
-		CreatedAt:        parseNobusTime(s.CreatedAt),
+		CreatedAt:        createdAt,
 		AvailabilityZone: s.AvailabilityZone,
 		Metadata:         s.Metadata,
-	}
+	}, nil
 }
 
-func parseNobusTime(value string) time.Time {
+func parseNobusTime(value string) (time.Time, error) {
 	if value == "" {
-		return time.Time{}
+		return time.Time{}, nil
 	}
 	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.999999", "2006-01-02T15:04:05.999", "2006-01-02T15:04:05"} {
 		parsed, err := time.Parse(layout, value)
 		if err == nil {
-			return parsed
+			return parsed, nil
 		}
 	}
-	return time.Time{}
+	return time.Time{}, fmt.Errorf("parse Nobus timestamp %q: %w", value, ErrInvalid)
 }

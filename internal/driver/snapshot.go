@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -20,11 +21,16 @@ func (d *Driver) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequ
 	if req.GetSourceVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "source volume id is required")
 	}
+	unlock := d.names.TryLock("snapshot:" + req.GetName())
+	if unlock == nil {
+		return nil, status.Error(codes.Aborted, "another create operation is in flight for this snapshot name")
+	}
+	defer unlock()
 	volume, err := d.cloud.GetVolumeByID(ctx, req.GetSourceVolumeId())
 	if err != nil {
 		return nil, statusError(err)
 	}
-	zone := firstValue(volume.AvailabilityZone, d.config.AvailabilityZone)
+	zone := cmp.Or(volume.AvailabilityZone, d.config.AvailabilityZone)
 	existing, err := d.reconcileSnapshotByName(ctx, req.GetName(), req.GetSourceVolumeId(), zone)
 	if err == nil {
 		return &csi.CreateSnapshotResponse{Snapshot: csiSnapshot(*existing)}, nil
@@ -138,13 +144,7 @@ func (d *Driver) reconcileSnapshotByName(ctx context.Context, name string, sourc
 		return nil, cloud.ErrNotFound
 	}
 	slices.SortFunc(compatible, func(left cloud.Snapshot, right cloud.Snapshot) int {
-		if left.ID < right.ID {
-			return -1
-		}
-		if left.ID > right.ID {
-			return 1
-		}
-		return 0
+		return cmp.Compare(left.ID, right.ID)
 	})
 	canonical := compatible[0]
 	for _, duplicate := range compatible[1:] {

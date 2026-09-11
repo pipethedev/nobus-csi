@@ -233,26 +233,6 @@ func TestClient_UnauthorizedRefreshesLoginToken(t *testing.T) {
 	}
 }
 
-func TestClient_GetVolumeByName_MissingReturnsNotFound(t *testing.T) {
-	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path != volumeListPath {
-			t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
-		}
-		if r.URL.Query().Get("name") != "missing" {
-			t.Fatalf("expected name query")
-		}
-		if r.URL.Query().Get("availability_zone") != "az2" {
-			t.Fatalf("expected az2 query, got %q", r.URL.Query().Get("availability_zone"))
-		}
-		return jsonOK(t, &volumeListResponse{Status: true}), nil
-	})
-	client := newTestClient(t, transport)
-	_, err := client.GetVolumeByName(context.Background(), "missing", "az2")
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expected ErrNotFound, got %v", err)
-	}
-}
-
 func TestClient_DeleteVolume_SendsAvailabilityZone(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -265,7 +245,7 @@ func TestClient_DeleteVolume_SendsAvailabilityZone(t *testing.T) {
 			if r.URL.Query().Get("availability_zone") != "az1" {
 				t.Fatalf("expected az1 query, got %q", r.URL.Query().Get("availability_zone"))
 			}
-			return jsonOK(t, &genericVolumeResponse{Status: true, Data: json.RawMessage(`{}`)}), nil
+			return jsonOK(t, statusOnlyResponse{Status: true}), nil
 		case 2:
 			if r.URL.Path != volumeListPath {
 				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
@@ -287,7 +267,7 @@ func TestClient_DeleteVolume_StillListedReturnsUnavailable(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
 		if requests == 1 {
-			return jsonOK(t, &genericVolumeResponse{Status: true, Data: json.RawMessage(`{}`)}), nil
+			return jsonOK(t, statusOnlyResponse{Status: true}), nil
 		}
 		return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1"})), nil
 	})
@@ -440,7 +420,7 @@ func TestClient_DeleteSnapshot_SendsAvailabilityZone(t *testing.T) {
 		if r.URL.Query().Get("availability_zone") != "az1" {
 			t.Fatalf("expected az1 query, got %q", r.URL.Query().Get("availability_zone"))
 		}
-		return jsonOK(t, &genericVolumeResponse{Status: true, Data: json.RawMessage(`{}`)}), nil
+		return jsonOK(t, statusOnlyResponse{Status: true}), nil
 	})
 	client := newTestClient(t, transport)
 	if err := client.DeleteSnapshot(context.Background(), "snap-1", "az1"); err != nil {
@@ -480,10 +460,7 @@ func TestClient_ResizeVolume_ReturnsProviderConfirmedSize(t *testing.T) {
 			if body.AvailabilityZone != "az2" {
 				t.Fatalf("expected az2 extend zone, got %q", body.AvailabilityZone)
 			}
-			return jsonOK(t, &genericVolumeResponse{
-				Status: true,
-				Data:   json.RawMessage(`{}`),
-			}), nil
+			return jsonOK(t, statusOnlyResponse{Status: true}), nil
 		case 2:
 			if r.URL.Path != volumeListPath {
 				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
@@ -572,6 +549,80 @@ func TestClient_CreateSnapshot_ParsesNobusCreatedAt(t *testing.T) {
 	}
 	if snapshot.CreatedAt.IsZero() {
 		t.Fatalf("expected parsed creation time")
+	}
+}
+
+func TestClient_CreateSnapshot_RejectsMalformedCreatedAt(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return responseWithRawBody(t, `{
+			"status": true,
+			"data": {
+				"id": "snap-1",
+				"name": "backup",
+				"volume_id": "vol-1",
+				"status": "available",
+				"size": 2,
+				"created_at": "not-a-timestamp"
+			}
+		}`), nil
+	})
+	client := newTestClient(t, transport)
+	_, err := client.CreateSnapshot(context.Background(), SnapshotSpec{
+		Name:             "backup",
+		VolumeID:         "vol-1",
+		ProjectID:        "project",
+		AvailabilityZone: "az2",
+		Force:            true,
+	})
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("expected ErrInvalid, got %v", err)
+	}
+}
+
+func TestClient_ListVolumes_PaginatesSortedIDs(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonOK(t, volumeListWith(
+			apiVolume{ID: "vol-b", Size: 1},
+			apiVolume{ID: "vol-a", Size: 1},
+			apiVolume{ID: "vol-c", Size: 1},
+		)), nil
+	})
+	client := newTestClient(t, transport)
+	first, token, err := client.ListVolumes(context.Background(), Page{Size: 2})
+	if err != nil {
+		t.Fatalf("list first page: %v", err)
+	}
+	if len(first) != 2 || first[0].ID != "vol-a" || first[1].ID != "vol-b" {
+		t.Fatalf("expected sorted first page vol-a,vol-b, got %+v", first)
+	}
+	if token != "2" {
+		t.Fatalf("expected next token 2, got %q", token)
+	}
+	second, token, err := client.ListVolumes(context.Background(), Page{Size: 2, Token: token})
+	if err != nil {
+		t.Fatalf("list second page: %v", err)
+	}
+	if len(second) != 1 || second[0].ID != "vol-c" {
+		t.Fatalf("expected remaining vol-c, got %+v", second)
+	}
+	if token != "" {
+		t.Fatalf("expected empty next token, got %q", token)
+	}
+}
+
+func TestClient_GetInstanceMetadata_CanceledContext_ReturnsCanceled(t *testing.T) {
+	client := newTestClient(t, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatalf("expected canceled context")
+		return nil, nil
+	}))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := client.GetInstanceMetadata(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if errors.Is(err, ErrUnavailable) {
+		t.Fatalf("canceled metadata should not be classified as unavailable: %v", err)
 	}
 }
 
@@ -668,7 +719,7 @@ func newTestClient(t *testing.T, transport http.RoundTripper) *Client {
 	return client
 }
 
-func jsonOK(t *testing.T, value responsePayload) *http.Response {
+func jsonOK(t *testing.T, value any) *http.Response {
 	t.Helper()
 	return responseWithBody(t, http.StatusOK, value)
 }
@@ -678,7 +729,7 @@ func jsonErrorResponse(t *testing.T, status int, value errorResponse) *http.Resp
 	return responseWithBody(t, status, value)
 }
 
-func responseWithBody(t *testing.T, status int, value responsePayload) *http.Response {
+func responseWithBody(t *testing.T, status int, value any) *http.Response {
 	t.Helper()
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -700,28 +751,12 @@ func responseWithRawBody(t *testing.T, value string) *http.Response {
 	}
 }
 
-func rawVolumeJSON(t *testing.T, value apiVolume) json.RawMessage {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("marshal raw json: %v", err)
-	}
-	return data
-}
-
 func volumeListWith(items ...apiVolume) *volumeListResponse {
 	response := &volumeListResponse{Status: true}
 	response.Data.Items = items
 	return response
 }
 
-type responsePayload interface {
-	responsePayload()
+type statusOnlyResponse struct {
+	Status bool `json:"status"`
 }
-
-func (*volumeResponse) responsePayload()        {}
-func (*volumeListResponse) responsePayload()    {}
-func (*genericVolumeResponse) responsePayload() {}
-func (*snapshotResponse) responsePayload()      {}
-func (*snapshotListResponse) responsePayload()  {}
-func (errorResponse) responsePayload()          {}

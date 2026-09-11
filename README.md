@@ -4,13 +4,7 @@
 
 ## Nobus API Reference
 
-The provider integration is based on the Nobus API docs:
-
-```text
-https://nobus.io
-https://cloud-api.nobus.io/api/v2/docs
-https://cloud-api.nobus.io/api/v2/openapi.json
-```
+The provider integration is based on the [Nobus](https://nobus.io) cloud platform, the [Nobus API docs](https://cloud-api.nobus.io/api/v2/docs), and the [Nobus OpenAPI spec](https://cloud-api.nobus.io/api/v2/openapi.json).
 
 Authentication uses `POST /api/v2/auth/login` with email and password, then sends the returned token as `Authorization: Bearer <token>` on block storage API calls.
 
@@ -63,7 +57,7 @@ The Nobus login email/password still live in Nomad itself via `nomad var put nob
 | `NOBUS_PROJECT_ID` | yes | none | Nobus project ID used for volume APIs. |
 | `NOBUS_AVAILABILITY_ZONE` | yes | none | Nobus availability zone used for volume APIs. |
 | `NOBUS_VOLUME_TYPE` | no | none | Default Nobus volume type. |
-| `NOBUS_ALLOW_FAKE` | no | `false` | Enables the in-memory fake provider for local tests only. Do not set this in Nomad or Kubernetes. |
+| `NOBUS_ALLOW_FAKE` | no | `false` | Enables the in-memory fake provider and allows node/all mode on non-Linux hosts for local tests only. Without this flag, node/all mode refuses to start on non-Linux so a real provider cannot be paired with a fake mounter. Do not set this in Nomad or Kubernetes. |
 | `NOBUS_DRIVER_NAME` | no | `csi.nobus.io` | CSI driver name. |
 | `NOBUS_DRIVER_VERSION` | no | `0.1.0` | Version shown by Nomad and Kubernetes health tooling. |
 
@@ -131,4 +125,4 @@ CSI snapshot IDs returned by this driver are `availability-zone/provider-snapsho
 
 ## Node Identity
 
-The Nobus OpenAPI schema documents block storage APIs but not an instance metadata API. The node plugin reads provider metadata from cloud-init ConfigDrive data at `/run/cloud-init/instance-data.json` or `/var/lib/cloud/instance/instance-data.json`. If neither file has an instance ID, `NodeGetInfo` fails instead of serving a bogus node ID.
+Nobus documents instance management APIs, but the current OpenAPI does not expose a “current node” metadata endpoint the CSI node plugin can query. The node plugin therefore reads instance identity from cloud-init ConfigDrive data at `/run/cloud-init/instance-data.json` or `/var/lib/cloud/instance/instance-data.json`. If neither file has an instance ID, `NodeGetInfo` fails instead of serving a bogus node ID.

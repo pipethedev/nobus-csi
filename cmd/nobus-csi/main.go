@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
@@ -30,6 +31,13 @@ func main() {
 }
 
 func run(config driver.Config) error {
+	if err := config.Validate(); err != nil {
+		return err
+	}
+	if err := requireLinuxNode(config); err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -50,12 +58,21 @@ func run(config driver.Config) error {
 	if err != nil {
 		return err
 	}
-	mounter := mount.New()
-	server, err := driver.NewServer(config, provider, mounter)
+	server, err := driver.NewServer(config, provider, mount.New())
 	if err != nil {
 		return fmt.Errorf("create server: %w", err)
 	}
 	return server.Serve(ctx)
+}
+
+func requireLinuxNode(config driver.Config) error {
+	if config.Mode == driver.ModeController {
+		return nil
+	}
+	if runtime.GOOS == "linux" || config.AllowFake {
+		return nil
+	}
+	return fmt.Errorf("node plugin requires linux unless NOBUS_ALLOW_FAKE=true")
 }
 
 func providerFromConfig(config driver.Config) (cloud.Cloud, error) {

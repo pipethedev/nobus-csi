@@ -8,7 +8,6 @@ import (
 type Cloud interface {
 	CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, error)
 	GetVolumeByID(ctx context.Context, id string) (*Volume, error)
-	GetVolumeByName(ctx context.Context, name string, availabilityZone string) (*Volume, error)
 	ListVolumes(ctx context.Context, page Page) ([]Volume, string, error)
 	DeleteVolume(ctx context.Context, id string) error
 	ResizeVolume(ctx context.Context, id string, sizeBytes int64, availabilityZone string) (int64, error)
@@ -44,7 +43,6 @@ type Volume struct {
 	SizeBytes        int64
 	Status           VolumeStatus
 	AvailabilityZone string
-	Region           string
 	Type             string
 	Multiattach      bool
 	Metadata         map[string]string

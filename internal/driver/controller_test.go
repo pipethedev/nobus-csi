@@ -649,6 +649,65 @@ func TestCreateSnapshot_PostCreateEmptyList_RetriesUntilVisible(t *testing.T) {
 	}
 }
 
+func TestCreateVolume_EncodedSnapshotSource_SendsProviderSnapshotID(t *testing.T) {
+	provider := &snapshotSourceCloud{}
+	driver := New(testConfig(), provider, mount.NewFake())
+	req := createVolumeRequest(testGiB)
+	req.VolumeContentSource = &csi.VolumeContentSource{
+		Type: &csi.VolumeContentSource_Snapshot{
+			Snapshot: &csi.VolumeContentSource_SnapshotSource{SnapshotId: "az2/snap-9"},
+		},
+	}
+	if _, err := driver.CreateVolume(context.Background(), req); err != nil {
+		t.Fatalf("create volume from snapshot: %v", err)
+	}
+	if provider.snapshotID != "snap-9" {
+		t.Fatalf("expected decoded snapshot id snap-9, got %q", provider.snapshotID)
+	}
+}
+
+func TestCreateSnapshot_InFlightSameName_ReturnsAborted(t *testing.T) {
+	driver := newTestDriver()
+	unlock := driver.names.TryLock("snapshot:backup")
+	defer unlock()
+	_, err := driver.CreateSnapshot(context.Background(), &csi.CreateSnapshotRequest{
+		Name:           "backup",
+		SourceVolumeId: "vol-1",
+	})
+	if status.Code(err) != codes.Aborted {
+		t.Fatalf("expected Aborted, got %s (%v)", status.Code(err), err)
+	}
+}
+
+func TestControllerGetCapabilities_OmitsGetCapacity(t *testing.T) {
+	resp, err := newTestDriver().ControllerGetCapabilities(context.Background(), &csi.ControllerGetCapabilitiesRequest{})
+	if err != nil {
+		t.Fatalf("get capabilities: %v", err)
+	}
+	for _, capability := range resp.GetCapabilities() {
+		if capability.GetRpc().GetType() == csi.ControllerServiceCapability_RPC_GET_CAPACITY {
+			t.Fatalf("GET_CAPACITY should not be advertised")
+		}
+	}
+}
+
+func TestCreateVolume_VerifiedZoneMismatch_ReturnsAlreadyExists(t *testing.T) {
+	driver := New(testConfig(), mismatchedZoneCloud{}, mount.NewFake())
+	_, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("expected AlreadyExists, got %s (%v)", status.Code(err), err)
+	}
+}
+
+func TestStatusError_MapsCanceledAndDeadline(t *testing.T) {
+	if status.Code(statusError(context.Canceled)) != codes.Canceled {
+		t.Fatalf("expected Canceled")
+	}
+	if status.Code(statusError(context.DeadlineExceeded)) != codes.DeadlineExceeded {
+		t.Fatalf("expected DeadlineExceeded")
+	}
+}
+
 func newTestDriver() *Driver {
 	config := testConfig()
 	provider := cloud.NewFake(cloud.InstanceMetadata{
@@ -737,10 +796,6 @@ func newDualCreateCloud() *dualCreateCloud {
 		created:  make(chan struct{}, 2),
 		released: make(chan struct{}),
 	}
-}
-
-func (d *dualCreateCloud) GetVolumeByName(context.Context, string, string) (*cloud.Volume, error) {
-	return nil, cloud.ErrNotFound
 }
 
 func (d *dualCreateCloud) CreateVolume(_ context.Context, spec cloud.VolumeSpec) (*cloud.Volume, error) {
@@ -1234,6 +1289,76 @@ func (s *snapshotOrphanCloud) DeleteSnapshot(_ context.Context, id string, _ str
 
 func (s *snapshotOrphanCloud) deleted(id string) bool {
 	return slices.Contains(s.deletedIDs, id)
+}
+
+type snapshotSourceCloud struct {
+	cloud.Cloud
+	snapshotID string
+	created    bool
+}
+
+func (s *snapshotSourceCloud) CreateVolume(_ context.Context, spec cloud.VolumeSpec) (*cloud.Volume, error) {
+	s.snapshotID = spec.SnapshotID
+	s.created = true
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             spec.Name,
+		SizeBytes:        spec.SizeBytes,
+		AvailabilityZone: spec.AvailabilityZone,
+		Type:             spec.Type,
+	}, nil
+}
+
+func (s *snapshotSourceCloud) ListVolumes(context.Context, cloud.Page) ([]cloud.Volume, string, error) {
+	if !s.created {
+		return nil, "", nil
+	}
+	return []cloud.Volume{{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}}, "", nil
+}
+
+func (s *snapshotSourceCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+type mismatchedZoneCloud struct {
+	cloud.Cloud
+}
+
+func (mismatchedZoneCloud) CreateVolume(context.Context, cloud.VolumeSpec) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}, nil
+}
+
+func (mismatchedZoneCloud) ListVolumes(context.Context, cloud.Page) ([]cloud.Volume, string, error) {
+	return []cloud.Volume{{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az1",
+	}}, "", nil
+}
+
+func (mismatchedZoneCloud) GetVolumeByID(context.Context, string) (*cloud.Volume, error) {
+	return &cloud.Volume{
+		ID:               "vol-1",
+		Name:             "data",
+		SizeBytes:        testGiB,
+		AvailabilityZone: "az-other",
+	}, nil
 }
 
 type snapshotConflictOrphanCloud struct {

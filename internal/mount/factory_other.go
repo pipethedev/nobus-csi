@@ -2,6 +2,6 @@
 
 package mount
 
-func New() Interface {
+func New() Mounter {
 	return NewFake()
 }

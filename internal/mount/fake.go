@@ -42,8 +42,8 @@ func (f *Fake) Unmount(_ context.Context, target string) error {
 	return nil
 }
 
-func (f *Fake) Stats(context.Context, string, bool) (*Stats, error) {
-	return &Stats{TotalBytes: 1 << 30, AvailableBytes: 1 << 29, UsedBytes: 1 << 29}, nil
+func (f *Fake) Stats(context.Context, string, bool) (Stats, error) {
+	return Stats{TotalBytes: 1 << 30, AvailableBytes: 1 << 29, UsedBytes: 1 << 29}, nil
 }
 
 func (f *Fake) IsBlock(context.Context, string) (bool, error) {

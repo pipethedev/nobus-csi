@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -98,29 +99,23 @@ func (d *Driver) ControllerPublishVolume(ctx context.Context, req *csi.Controlle
 	}
 	defer unlock()
 	volume, err := d.cloud.GetVolumeByID(ctx, req.GetVolumeId())
-	zone := volumeContextValue(req.GetVolumeContext(), paramAvailabilityZone, d.config.AvailabilityZone)
-	if err == nil {
-		if volume.AvailabilityZone != "" {
-			zone = volume.AvailabilityZone
-		}
-		if volume.Multiattach {
-			return nil, statusError(cloud.ErrConflict)
-		}
-		device, attachedElsewhere := attachedDevice(*volume, req.GetNodeId())
-		if device != "" {
-			return &csi.ControllerPublishVolumeResponse{
-				PublishContext: map[string]string{"device_path": device},
-			}, nil
-		}
-		if attachedElsewhere {
-			return nil, statusError(cloud.ErrConflict)
-		}
-	} else if errors.Is(err, cloud.ErrNotFound) {
-		return nil, statusError(err)
-	} else {
+	if err != nil {
 		return nil, statusError(err)
 	}
-	device, err := d.cloud.AttachVolume(ctx, req.GetVolumeId(), req.GetNodeId(), zone)
+	zone := cmp.Or(volume.AvailabilityZone, req.GetVolumeContext()[paramAvailabilityZone], d.config.AvailabilityZone)
+	if volume.Multiattach {
+		return nil, statusError(cloud.ErrConflict)
+	}
+	device, attachedElsewhere := attachedDevice(*volume, req.GetNodeId())
+	if device != "" {
+		return &csi.ControllerPublishVolumeResponse{
+			PublishContext: map[string]string{"device_path": device},
+		}, nil
+	}
+	if attachedElsewhere {
+		return nil, statusError(cloud.ErrConflict)
+	}
+	device, err = d.cloud.AttachVolume(ctx, req.GetVolumeId(), req.GetNodeId(), zone)
 	if err != nil {
 		if device, ok := d.attachedDeviceAfterPublishError(ctx, req.GetVolumeId(), req.GetNodeId()); ok {
 			return &csi.ControllerPublishVolumeResponse{
@@ -216,7 +211,9 @@ func (d *Driver) verifyVolume(ctx context.Context, volume cloud.Volume, spec clo
 		}
 		return nil, statusError(err)
 	}
-	verified.AvailabilityZone = spec.AvailabilityZone
+	if verified.AvailabilityZone == "" {
+		verified.AvailabilityZone = spec.AvailabilityZone
+	}
 	if !compatibleVolume(*verified, spec) {
 		return nil, status.Error(codes.AlreadyExists, "volume name exists with different parameters")
 	}
@@ -242,13 +239,7 @@ func (d *Driver) reconcileVolumeByName(ctx context.Context, spec cloud.VolumeSpe
 		return nil, cloud.ErrNotFound
 	}
 	slices.SortFunc(compatible, func(left cloud.Volume, right cloud.Volume) int {
-		if left.ID < right.ID {
-			return -1
-		}
-		if left.ID > right.ID {
-			return 1
-		}
-		return 0
+		return cmp.Compare(left.ID, right.ID)
 	})
 	canonical := compatible[0]
 	for _, duplicate := range compatible[1:] {
@@ -338,7 +329,7 @@ func (d *Driver) ValidateVolumeCapabilities(_ context.Context, req *csi.Validate
 	if req.GetVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume id is required")
 	}
-	if message := capabilityValidationMessage(req.GetVolumeCapabilities()); message != "" {
+	if message := capabilityMessage(req.GetVolumeCapabilities()); message != "" {
 		return &csi.ValidateVolumeCapabilitiesResponse{
 			Message: message,
 		}, nil
@@ -364,17 +355,12 @@ func (d *Driver) ListVolumes(ctx context.Context, req *csi.ListVolumesRequest) (
 	return &csi.ListVolumesResponse{Entries: entries, NextToken: token}, nil
 }
 
-func (d *Driver) GetCapacity(context.Context, *csi.GetCapacityRequest) (*csi.GetCapacityResponse, error) {
-	return &csi.GetCapacityResponse{AvailableCapacity: 0}, nil
-}
-
 func (d *Driver) ControllerGetCapabilities(context.Context, *csi.ControllerGetCapabilitiesRequest) (*csi.ControllerGetCapabilitiesResponse, error) {
 	types := []csi.ControllerServiceCapability_RPC_Type{
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_VOLUME,
 		csi.ControllerServiceCapability_RPC_PUBLISH_UNPUBLISH_VOLUME,
 		csi.ControllerServiceCapability_RPC_EXPAND_VOLUME,
 		csi.ControllerServiceCapability_RPC_LIST_VOLUMES,
-		csi.ControllerServiceCapability_RPC_GET_CAPACITY,
 		csi.ControllerServiceCapability_RPC_CREATE_DELETE_SNAPSHOT,
 		csi.ControllerServiceCapability_RPC_LIST_SNAPSHOTS,
 		csi.ControllerServiceCapability_RPC_GET_VOLUME,

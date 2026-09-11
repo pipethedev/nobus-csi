@@ -3,7 +3,6 @@ package driver
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -16,13 +15,10 @@ import (
 
 type Server struct {
 	config Config
-	cloud  cloud.Cloud
-	mount  mount.Interface
 	server *grpc.Server
-	log    *slog.Logger
 }
 
-func NewServer(config Config, provider cloud.Cloud, mounter mount.Interface) (*Server, error) {
+func NewServer(config Config, provider cloud.Cloud, mounter mount.Mounter) (*Server, error) {
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -38,13 +34,7 @@ func NewServer(config Config, provider cloud.Cloud, mounter mount.Interface) (*S
 		csi.RegisterControllerServer(server, driver)
 		csi.RegisterNodeServer(server, driver)
 	}
-	return &Server{
-		config: config,
-		cloud:  provider,
-		mount:  mounter,
-		server: server,
-		log:    config.Logger,
-	}, nil
+	return &Server{config: config, server: server}, nil
 }
 
 func (s *Server) Serve(ctx context.Context) error {
@@ -52,7 +42,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	s.log.Info("preparing csi socket", "endpoint", s.config.Endpoint, "socket", address)
+	s.config.Logger.Info("preparing csi socket", "endpoint", s.config.Endpoint, "socket", address)
 	if err := os.RemoveAll(address); err != nil {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}
@@ -60,16 +50,16 @@ func (s *Server) Serve(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen unix socket: %w", err)
 	}
-	s.log.Info("csi grpc server listening", "mode", s.config.Mode, "socket", address)
+	s.config.Logger.Info("csi grpc server listening", "mode", s.config.Mode, "socket", address)
 	errs := make(chan error, 1)
 	go func() {
 		errs <- s.server.Serve(listener)
 	}()
 	select {
 	case <-ctx.Done():
-		s.log.Info("stopping csi grpc server")
+		s.config.Logger.Info("stopping csi grpc server")
 		s.server.GracefulStop()
-		s.log.Info("csi grpc server stopped")
+		s.config.Logger.Info("csi grpc server stopped")
 		return nil
 	case err := <-errs:
 		return err

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 )
 
 const (
@@ -38,7 +37,6 @@ type Config struct {
 	VolumeType             string
 	MinimumVolumeBytes     int64
 	VolumeGranularityBytes int64
-	OperationTimeout       time.Duration
 	Logger                 *slog.Logger
 }
 
@@ -62,7 +60,6 @@ func ConfigFromEnv() Config {
 		VolumeType:             os.Getenv("NOBUS_VOLUME_TYPE"),
 		MinimumVolumeBytes:     DefaultMinimumVolumeBytes,
 		VolumeGranularityBytes: DefaultVolumeGranularityBytes,
-		OperationTimeout:       2 * time.Minute,
 		Logger:                 slog.New(slog.NewJSONHandler(os.Stdout, nil)),
 	}
 }

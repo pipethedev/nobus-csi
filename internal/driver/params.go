@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"cmp"
 	"slices"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
@@ -14,7 +15,6 @@ const (
 	paramProjectID        = "project_id"
 	paramVolumeType       = "volume_type"
 	paramRegion           = "region"
-	contextVolumeType     = "volume_type"
 	TopologyZoneKey       = "topology.csi.nobus.io/zone"
 	TopologyRegionKey     = "topology.csi.nobus.io/region"
 )
@@ -40,8 +40,8 @@ func volumeSpec(req *csi.CreateVolumeRequest, defaults Config) (cloud.VolumeSpec
 		return cloud.VolumeSpec{}, err
 	}
 	params := req.GetParameters()
-	zone := selectedZone(req, firstValue(params[paramAvailabilityZone], defaults.AvailabilityZone))
-	project := firstValue(params[paramProjectID], defaults.ProjectID)
+	zone := selectedZone(req, cmp.Or(params[paramAvailabilityZone], defaults.AvailabilityZone))
+	project := cmp.Or(params[paramProjectID], defaults.ProjectID)
 	if zone == "" {
 		return cloud.VolumeSpec{}, status.Error(codes.InvalidArgument, "availability_zone is required")
 	}
@@ -53,8 +53,8 @@ func volumeSpec(req *csi.CreateVolumeRequest, defaults Config) (cloud.VolumeSpec
 		SizeBytes:        size,
 		AvailabilityZone: zone,
 		ProjectID:        project,
-		Type:             firstValue(params[paramVolumeType], defaults.VolumeType),
-		SnapshotID:       snapshotSource(req),
+		Type:             cmp.Or(params[paramVolumeType], defaults.VolumeType),
+		SnapshotID:       snapshotSource(req, defaults.AvailabilityZone),
 		Metadata:         map[string]string{"csi.driver": defaults.DriverName},
 	}, nil
 }
@@ -110,7 +110,7 @@ func roundUp(value int64, granularity int64) int64 {
 	return ((value / granularity) + 1) * granularity
 }
 
-func snapshotSource(req *csi.CreateVolumeRequest) string {
+func snapshotSource(req *csi.CreateVolumeRequest, fallbackZone string) string {
 	source := req.GetVolumeContentSource()
 	if source == nil {
 		return ""
@@ -119,21 +119,15 @@ func snapshotSource(req *csi.CreateVolumeRequest) string {
 	if snapshot == nil {
 		return ""
 	}
-	return snapshot.GetSnapshotId()
+	id, _ := decodeSnapshotID(snapshot.GetSnapshotId(), fallbackZone)
+	return id
 }
 
-func firstValue(value string, fallback string) string {
-	if value != "" {
-		return value
+func capabilityMessage(capabilities []*csi.VolumeCapability) string {
+	if err := validateCapabilities(capabilities); err != nil {
+		return err.Error()
 	}
-	return fallback
-}
-
-func volumeContextValue(context map[string]string, key string, fallback string) string {
-	if context == nil {
-		return fallback
-	}
-	return firstValue(context[key], fallback)
+	return ""
 }
 
 func validateCapabilities(capabilities []*csi.VolumeCapability) error {
@@ -160,20 +154,12 @@ func validateCapabilities(capabilities []*csi.VolumeCapability) error {
 	return nil
 }
 
-func capabilityValidationMessage(capabilities []*csi.VolumeCapability) string {
-	err := validateCapabilities(capabilities)
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
 func volumeContext(volume cloud.Volume) map[string]string {
 	context := map[string]string{
 		paramAvailabilityZone: volume.AvailabilityZone,
 	}
 	if volume.Type != "" {
-		context[contextVolumeType] = volume.Type
+		context[paramVolumeType] = volume.Type
 	}
 	return context
 }

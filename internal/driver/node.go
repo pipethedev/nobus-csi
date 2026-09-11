@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"cmp"
 	"context"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -35,7 +36,7 @@ func (d *Driver) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolumeRe
 	fsType := defaultFSType
 	flags := []string(nil)
 	if mount := capability.GetMount(); mount != nil {
-		fsType = firstValue(mount.GetFsType(), defaultFSType)
+		fsType = cmp.Or(mount.GetFsType(), defaultFSType)
 		flags = mount.GetMountFlags()
 	}
 	if err := d.mount.Stage(ctx, device, req.GetStagingTargetPath(), fsType, flags); err != nil {
@@ -86,9 +87,6 @@ func (d *Driver) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolu
 		if err != nil {
 			return nil, statusError(err)
 		}
-		if device == "" {
-			return nil, status.Error(codes.Unavailable, "block device is unavailable")
-		}
 		source = device
 	}
 	if err := d.mount.Publish(ctx, source, req.GetTargetPath(), req.GetReadonly(), block, flags); err != nil {
@@ -137,7 +135,7 @@ func (d *Driver) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolume
 	fsType := defaultFSType
 	if capability := req.GetVolumeCapability(); capability != nil {
 		if mount := capability.GetMount(); mount != nil {
-			fsType = firstValue(mount.GetFsType(), defaultFSType)
+			fsType = cmp.Or(mount.GetFsType(), defaultFSType)
 		}
 	}
 	if err := d.mount.Expand(ctx, req.GetVolumePath(), fsType); err != nil {

@@ -1,51 +1,39 @@
 package cloud
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"time"
 )
 
 type Fake struct {
-	mu              sync.Mutex
-	volumes         map[string]Volume
-	snapshots       map[string]Snapshot
-	metadata        InstanceMetadata
-	failures        map[string]error
-	allowDuplicates bool
+	mu           sync.Mutex
+	volumes      map[string]Volume
+	snapshots    map[string]Snapshot
+	metadata     InstanceMetadata
+	nextVolume   int
+	nextSnapshot int
 }
 
 func NewFake(metadata InstanceMetadata) *Fake {
 	return &Fake{
-		volumes:   make(map[string]Volume),
-		snapshots: make(map[string]Snapshot),
-		metadata:  metadata,
-		failures:  make(map[string]error),
+		volumes:      make(map[string]Volume),
+		snapshots:    make(map[string]Snapshot),
+		metadata:     metadata,
+		nextVolume:   1,
+		nextSnapshot: 1,
 	}
-}
-
-func (f *Fake) SetFailure(operation string, err error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.failures[operation] = err
-}
-
-func (f *Fake) AllowDuplicateVolumeNames() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.allowDuplicates = true
 }
 
 func (f *Fake) CreateVolume(_ context.Context, spec VolumeSpec) (*Volume, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if err := f.failure("CreateVolume"); err != nil {
-		return nil, err
-	}
 	for _, volume := range f.volumes {
-		if !f.allowDuplicates && volume.Name == spec.Name {
+		if volume.Name == spec.Name {
 			if volume.SizeBytes != spec.SizeBytes || volume.AvailabilityZone != spec.AvailabilityZone || volume.Type != spec.Type {
 				return nil, ErrAlreadyExists
 			}
@@ -53,7 +41,8 @@ func (f *Fake) CreateVolume(_ context.Context, spec VolumeSpec) (*Volume, error)
 			return &clone, nil
 		}
 	}
-	id := fmt.Sprintf("vol-%d", len(f.volumes)+1)
+	id := fmt.Sprintf("vol-%d", f.nextVolume)
+	f.nextVolume++
 	volume := Volume{
 		ID:               id,
 		Name:             spec.Name,
@@ -61,8 +50,7 @@ func (f *Fake) CreateVolume(_ context.Context, spec VolumeSpec) (*Volume, error)
 		Status:           VolumeStatusAvailable,
 		AvailabilityZone: spec.AvailabilityZone,
 		Type:             spec.Type,
-		Multiattach:      false,
-		Metadata:         copyMap(spec.Metadata),
+		Metadata:         maps.Clone(spec.Metadata),
 	}
 	f.volumes[id] = volume
 	return &volume, nil
@@ -76,18 +64,6 @@ func (f *Fake) GetVolumeByID(_ context.Context, id string) (*Volume, error) {
 		return nil, ErrNotFound
 	}
 	return &volume, nil
-}
-
-func (f *Fake) GetVolumeByName(_ context.Context, name string, availabilityZone string) (*Volume, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	for _, volume := range f.volumes {
-		if volume.Name == name && (availabilityZone == "" || volume.AvailabilityZone == availabilityZone) {
-			clone := volume
-			return &clone, nil
-		}
-	}
-	return nil, ErrNotFound
 }
 
 func (f *Fake) ListVolumes(_ context.Context, page Page) ([]Volume, string, error) {
@@ -106,6 +82,9 @@ func (f *Fake) ListVolumes(_ context.Context, page Page) ([]Volume, string, erro
 		}
 		volumes = append(volumes, volume)
 	}
+	slices.SortFunc(volumes, func(left Volume, right Volume) int {
+		return cmp.Compare(left.ID, right.ID)
+	})
 	return paginate(volumes, page)
 }
 
@@ -194,7 +173,8 @@ func (f *Fake) CreateSnapshot(_ context.Context, spec SnapshotSpec) (*Snapshot, 
 			return &clone, nil
 		}
 	}
-	id := fmt.Sprintf("snap-%d", len(f.snapshots)+1)
+	id := fmt.Sprintf("snap-%d", f.nextSnapshot)
+	f.nextSnapshot++
 	snapshot := Snapshot{
 		ID:               id,
 		Name:             spec.Name,
@@ -203,7 +183,7 @@ func (f *Fake) CreateSnapshot(_ context.Context, spec SnapshotSpec) (*Snapshot, 
 		Status:           SnapshotStatusAvailable,
 		CreatedAt:        time.Now().UTC(),
 		AvailabilityZone: spec.AvailabilityZone,
-		Metadata:         copyMap(spec.Metadata),
+		Metadata:         maps.Clone(spec.Metadata),
 	}
 	f.snapshots[id] = snapshot
 	return &snapshot, nil
@@ -236,6 +216,9 @@ func (f *Fake) ListSnapshots(_ context.Context, page Page) ([]Snapshot, string, 
 		}
 		snapshots = append(snapshots, snapshot)
 	}
+	slices.SortFunc(snapshots, func(left Snapshot, right Snapshot) int {
+		return cmp.Compare(left.ID, right.ID)
+	})
 	return paginate(snapshots, page)
 }
 
@@ -244,24 +227,4 @@ func (f *Fake) GetInstanceMetadata(_ context.Context) (*InstanceMetadata, error)
 	defer f.mu.Unlock()
 	metadata := f.metadata
 	return &metadata, nil
-}
-
-func (f *Fake) failure(operation string) error {
-	err, ok := f.failures[operation]
-	if !ok {
-		return nil
-	}
-	delete(f.failures, operation)
-	return err
-}
-
-func copyMap(source map[string]string) map[string]string {
-	if len(source) == 0 {
-		return nil
-	}
-	target := make(map[string]string, len(source))
-	for key, value := range source {
-		target[key] = value
-	}
-	return target
 }

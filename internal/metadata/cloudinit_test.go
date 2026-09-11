@@ -44,6 +44,38 @@ func TestReadPath_ConfigDriveFallback_ReturnsInstance(t *testing.T) {
 	}
 }
 
+func TestReadPath_PrefersV1OverDS(t *testing.T) {
+	path := writeMetadata(t, `{
+		"v1": {
+			"instance_id": "server-v1",
+			"availability_zone": "az-v1",
+			"region": "region-v1"
+		},
+		"ds": {
+			"meta_data": {
+				"instance-id": "server-ds",
+				"availability_zone": "az-ds",
+				"region": "region-ds"
+			}
+		}
+	}`)
+	instance, err := readPath(path)
+	if err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	if instance.ID != "server-v1" || instance.AvailabilityZone != "az-v1" || instance.Region != "region-v1" {
+		t.Fatalf("expected v1 fields to win, got %+v", instance)
+	}
+}
+
+func TestReadPath_MissingInstanceID_ReturnsInvalid(t *testing.T) {
+	path := writeMetadata(t, `{"v1":{"availability_zone":"az1"}}`)
+	_, err := readPath(path)
+	if !errors.Is(err, os.ErrInvalid) {
+		t.Fatalf("expected os.ErrInvalid, got %v", err)
+	}
+}
+
 func TestReadCloudInit_CanceledContext_ReturnsCanceled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

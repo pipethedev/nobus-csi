@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"context"
 	"errors"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
@@ -12,6 +13,10 @@ func statusError(err error) error {
 	switch {
 	case err == nil:
 		return nil
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, "operation canceled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, "operation timed out")
 	case errors.Is(err, cloud.ErrNotFound):
 		return status.Error(codes.NotFound, "resource not found")
 	case errors.Is(err, cloud.ErrAlreadyExists):

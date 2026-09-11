@@ -2,6 +2,6 @@
 
 package mount
 
-func New() Interface {
-	return NewLinux()
+func New() Mounter {
+	return newLinux()
 }

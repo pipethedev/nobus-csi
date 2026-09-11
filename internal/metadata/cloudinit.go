@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -18,56 +19,41 @@ type Instance struct {
 	Region           string
 }
 
-func ReadCloudInit(ctx context.Context) (*Instance, error) {
+func ReadCloudInit(ctx context.Context) (Instance, error) {
 	for _, path := range cloudInitPaths {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+		if err := ctx.Err(); err != nil {
+			return Instance{}, err
 		}
 		instance, err := readPath(path)
 		if err == nil {
 			return instance, nil
 		}
 		if !os.IsNotExist(err) {
-			return nil, err
+			return Instance{}, err
 		}
 	}
-	return nil, fmt.Errorf("cloud-init instance metadata: %w", os.ErrNotExist)
+	return Instance{}, fmt.Errorf("cloud-init instance metadata: %w", os.ErrNotExist)
 }
 
-func readPath(path string) (*Instance, error) {
+func readPath(path string) (Instance, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
+		return Instance{}, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer closeFile(file)
+	defer func() { _ = file.Close() }()
 	var data cloudInitData
 	if err := json.NewDecoder(file).Decode(&data); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", path, err)
+		return Instance{}, fmt.Errorf("decode %s: %w", path, err)
 	}
 	instance := Instance{
-		ID:               firstValue(data.V1.InstanceID, data.V1.InstanceIDHyphen, data.DS.MetaData.InstanceID, data.DS.MetaData.InstanceIDHyphen),
-		AvailabilityZone: firstValue(data.V1.AvailabilityZone, data.V1.AvailabilityZoneHyphen, data.DS.MetaData.AvailabilityZone),
-		Region:           firstValue(data.V1.Region, data.DS.MetaData.Region),
+		ID:               cmp.Or(data.V1.InstanceID, data.V1.InstanceIDHyphen, data.DS.MetaData.InstanceID, data.DS.MetaData.InstanceIDHyphen),
+		AvailabilityZone: cmp.Or(data.V1.AvailabilityZone, data.V1.AvailabilityZoneHyphen, data.DS.MetaData.AvailabilityZone),
+		Region:           cmp.Or(data.V1.Region, data.DS.MetaData.Region),
 	}
 	if instance.ID == "" {
-		return nil, fmt.Errorf("cloud-init instance id missing: %w", os.ErrInvalid)
+		return Instance{}, fmt.Errorf("cloud-init instance id missing: %w", os.ErrInvalid)
 	}
-	return &instance, nil
-}
-
-func closeFile(file *os.File) {
-	_ = file.Close()
-}
-
-func firstValue(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
+	return instance, nil
 }
 
 type cloudInitData struct {

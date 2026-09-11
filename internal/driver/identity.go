@@ -32,5 +32,5 @@ func (d *Driver) GetPluginCapabilities(context.Context, *csi.GetPluginCapabiliti
 }
 
 func (d *Driver) Probe(context.Context, *csi.ProbeRequest) (*csi.ProbeResponse, error) {
-	return &csi.ProbeResponse{Ready: wrapperspb.Bool(d.ready)}, nil
+	return &csi.ProbeResponse{Ready: wrapperspb.Bool(true)}, nil
 }

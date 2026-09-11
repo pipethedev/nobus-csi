@@ -26,7 +26,7 @@ type Linux struct {
 	exec    utilexec.Interface
 }
 
-func NewLinux() *Linux {
+func newLinux() *Linux {
 	exec := utilexec.New()
 	return &Linux{
 		mounter: &kmount.SafeFormatAndMount{
@@ -52,12 +52,13 @@ func (l *Linux) Stage(ctx context.Context, source string, target string, fsType 
 	if err := os.MkdirAll(target, 0o750); err != nil {
 		return fmt.Errorf("create staging path %s: %w", target, err)
 	}
-	return l.withContext(ctx, func() error {
-		if err := l.mounter.FormatAndMountSensitive(source, target, fsType, flags, nil); err != nil {
-			return fmt.Errorf("stage device %s at %s: %w", source, target, err)
-		}
-		return nil
-	})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := l.mounter.FormatAndMountSensitive(source, target, fsType, flags, nil); err != nil {
+		return fmt.Errorf("stage device %s at %s: %w", source, target, err)
+	}
+	return nil
 }
 
 func (l *Linux) Publish(ctx context.Context, source string, target string, readonly bool, block bool, flags []string) error {
@@ -79,12 +80,13 @@ func (l *Linux) Publish(ctx context.Context, source string, target string, reado
 	if readonly {
 		options = append(options, "ro")
 	}
-	return l.withContext(ctx, func() error {
-		if err := l.mounter.MountSensitive(source, target, "", options, nil); err != nil {
-			return fmt.Errorf("publish %s at %s: %w", source, target, err)
-		}
-		return nil
-	})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := l.mounter.MountSensitive(source, target, "", options, nil); err != nil {
+		return fmt.Errorf("publish %s at %s: %w", source, target, err)
+	}
+	return nil
 }
 
 func (l *Linux) Unmount(ctx context.Context, target string) error {
@@ -95,34 +97,35 @@ func (l *Linux) Unmount(ctx context.Context, target string) error {
 	if !mounted {
 		return nil
 	}
-	return l.withContext(ctx, func() error {
-		if err := l.mounter.Unmount(target); err != nil {
-			return fmt.Errorf("unmount %s: %w", target, err)
-		}
-		return nil
-	})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := l.mounter.Unmount(target); err != nil {
+		return fmt.Errorf("unmount %s: %w", target, err)
+	}
+	return nil
 }
 
-func (l *Linux) Stats(_ context.Context, target string, block bool) (*Stats, error) {
+func (l *Linux) Stats(_ context.Context, target string, block bool) (Stats, error) {
 	info, err := os.Stat(target)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("volume path %s: %w", target, os.ErrNotExist)
+			return Stats{}, fmt.Errorf("volume path %s: %w", target, os.ErrNotExist)
 		}
-		return nil, fmt.Errorf("stat volume path %s: %w", target, err)
+		return Stats{}, fmt.Errorf("stat volume path %s: %w", target, err)
 	}
 	if block {
-		return &Stats{TotalBytes: info.Size()}, nil
+		return Stats{TotalBytes: info.Size()}, nil
 	}
 	var stat unix.Statfs_t
 	if err := unix.Statfs(target, &stat); err != nil {
-		return nil, fmt.Errorf("statfs %s: %w", target, err)
+		return Stats{}, fmt.Errorf("statfs %s: %w", target, err)
 	}
 	total := int64(stat.Blocks) * int64(stat.Bsize)
 	free := int64(stat.Bavail) * int64(stat.Bsize)
 	files := int64(stat.Files)
 	freeFiles := int64(stat.Ffree)
-	return &Stats{
+	return Stats{
 		TotalBytes:     total,
 		AvailableBytes: free,
 		UsedBytes:      total - free,
@@ -173,11 +176,7 @@ func (l *Linux) filesystemType(ctx context.Context, target string) (string, erro
 
 func (l *Linux) FindDevice(ctx context.Context, volumeID string, hintedPath string) (string, error) {
 	// Nobus currently exposes attached block devices through QEMU-derived by-id names.
-	candidates := []string{
-		hintedPath,
-		filepath.Join("/dev/disk/by-id", "virtio-"+volumeID),
-		filepath.Join("/dev/disk/by-id", "scsi-0QEMU_QEMU_HARDDISK_"+volumeID),
-	}
+	candidates := deviceCandidates(volumeID, hintedPath)
 	deadline := time.NewTimer(deviceWaitTimeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(deviceWaitInterval)
@@ -203,13 +202,6 @@ func (l *Linux) FindDevice(ctx context.Context, volumeID string, hintedPath stri
 		case <-ticker.C:
 		}
 	}
-}
-
-func (l *Linux) withContext(ctx context.Context, action func() error) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return action()
 }
 
 func (l *Linux) run(ctx context.Context, command string, args ...string) error {
