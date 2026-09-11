@@ -114,6 +114,8 @@ Unknown parameters are rejected with `INVALID_ARGUMENT`.
 
 The Nobus OpenAPI currently exposes AZ-scoped list endpoints without server-side page-token or page-size parameters. `ListVolumes` and `ListSnapshots` therefore list the configured `NOBUS_AVAILABILITY_ZONE` and apply CSI pagination locally.
 
+The documented v3 get-volume endpoint currently fails for valid volume IDs. `GetVolumeByID` therefore uses the AZ-scoped list endpoint and selects the exact provider ID locally.
+
 Volume attach and detach use the public v3 `/api/v3/volume/attach` and `/api/v3/volume/detach` endpoints with API-key authentication.
 
 The OpenAPI includes `multiattach` on create-volume, but the live API rejects that field. The driver does not send it during create and still rejects any out-of-band volume that Nobus reports as multiattach.

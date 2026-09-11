@@ -27,7 +27,7 @@ const (
 	volumeAttachPath = "/api/v3/volume/attach"
 	volumeDetachPath = "/api/v3/volume/detach"
 	bytesPerGiB      = int64(1 << 30)
-	defaultTimeout   = 30 * time.Second
+	defaultTimeout   = 2 * time.Minute
 	attachWait       = 3 * time.Minute
 	attachPoll       = 2 * time.Second
 )
@@ -92,18 +92,20 @@ func (c *Client) GetVolumeByID(ctx context.Context, id string) (*Volume, error) 
 }
 
 func (c *Client) getVolumeByIDInZone(ctx context.Context, id string, availabilityZone string) (*Volume, error) {
-	query := c.zoneQuery(availabilityZone)
-	query.Set("volume_id", id)
-	var response volumeGetResponse
-	if err := c.do(ctx, http.MethodGet, volumePath, query, nil, decodeJSON(&response)); err != nil {
+	// Nobus v3's documented get-volume endpoint currently fails for valid IDs.
+	// List the zone and select the exact ID until the provider fixes it.
+	volumes, _, err := c.ListVolumes(ctx, Page{
+		AvailabilityZone: cmp.Or(availabilityZone, c.config.AvailabilityZone),
+	})
+	if err != nil {
 		return nil, err
 	}
-	if response.Data == nil || response.Data.ID == "" {
-		return nil, ErrNotFound
+	for _, volume := range volumes {
+		if volume.ID == id {
+			return &volume, nil
+		}
 	}
-	volume := response.Data.toDomain()
-	volume.AvailabilityZone = query.Get("availability_zone")
-	return &volume, nil
+	return nil, ErrNotFound
 }
 
 func (c *Client) ListVolumes(ctx context.Context, page Page) ([]Volume, string, error) {
@@ -453,11 +455,6 @@ type snapshotRequest struct {
 type volumeResponse struct {
 	Status bool      `json:"status"`
 	Data   apiVolume `json:"data"`
-}
-
-type volumeGetResponse struct {
-	Status bool       `json:"status"`
-	Data   *apiVolume `json:"data"`
 }
 
 type volumeListResponse struct {

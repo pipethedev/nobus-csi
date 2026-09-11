@@ -83,21 +83,21 @@ func TestClient_CreateVolume_UsesRequestAvailabilityZone(t *testing.T) {
 	}
 }
 
-func TestClient_GetVolumeByID_UsesDocumentedEndpoint(t *testing.T) {
+func TestClient_GetVolumeByID_UsesListEndpoint(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path != volumePath {
-			t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+		if r.URL.Path != volumeListPath {
+			t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
 		}
-		if r.URL.Query().Get("volume_id") != "vol-1" {
-			t.Fatalf("expected volume_id vol-1, got %q", r.URL.Query().Get("volume_id"))
+		if r.URL.Query().Has("id") || r.URL.Query().Has("volume_id") {
+			t.Fatalf("expected no undocumented ID filter, got %s", r.URL.RawQuery)
 		}
-		return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{
+		return jsonOK(t, volumeListWith(apiVolume{
 			ID:               "vol-1",
 			Name:             "data",
 			Size:             1,
 			Status:           VolumeStatusAvailable,
 			AvailabilityZone: "nova",
-		}}), nil
+		})), nil
 	})
 	client := newTestClient(t, transport)
 	volume, err := client.GetVolumeByID(context.Background(), "vol-1")
@@ -173,10 +173,10 @@ func TestClient_DeleteVolume_SendsAvailabilityZone(t *testing.T) {
 			}
 			return jsonOK(t, statusOnlyResponse{Status: true}), nil
 		case 2:
-			if r.URL.Path != volumePath {
-				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			if r.URL.Path != volumeListPath {
+				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
 			}
-			return jsonOK(t, volumeGetResponse{Status: true}), nil
+			return jsonOK(t, volumeListWith()), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -195,7 +195,7 @@ func TestClient_DeleteVolume_StillListedReturnsUnavailable(t *testing.T) {
 		if requests == 1 {
 			return jsonOK(t, statusOnlyResponse{Status: true}), nil
 		}
-		return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{ID: "vol-1"}}), nil
+		return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1"})), nil
 	})
 	client := newTestClient(t, transport)
 	err := client.DeleteVolume(context.Background(), "vol-1")
@@ -228,18 +228,18 @@ func TestClient_AttachVolume_ReturnsDeviceFromAttachment(t *testing.T) {
 			}
 			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
 		case 2:
-			if r.URL.Path != volumePath {
-				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			if r.URL.Path != volumeListPath {
+				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
 			}
 			if r.URL.Query().Get("availability_zone") != "az2" {
 				t.Fatalf("expected az2 lookup zone, got %q", r.URL.Query().Get("availability_zone"))
 			}
-			return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{
+			return jsonOK(t, volumeListWith(apiVolume{
 				ID: "vol-1",
 				Attachments: []apiAttachment{
 					{ServerID: "server-1", Device: "/dev/vdb"},
 				},
-			}}), nil
+			})), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -266,21 +266,21 @@ func TestClient_AttachVolume_WaitsForDevice(t *testing.T) {
 			}
 			return responseWithRawBody(t, `{"status":true,"data":"Volume attached successfully"}`), nil
 		case 2:
-			return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{
+			return jsonOK(t, volumeListWith(apiVolume{
 				ID:     "vol-1",
 				Status: VolumeStatusCreating,
 				Attachments: []apiAttachment{
 					{ServerID: "server-1"},
 				},
-			}}), nil
+			})), nil
 		case 3:
-			return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{
+			return jsonOK(t, volumeListWith(apiVolume{
 				ID:     "vol-1",
 				Status: VolumeStatusInUse,
 				Attachments: []apiAttachment{
 					{ServerID: "server-1", Device: "/dev/vdc"},
 				},
-			}}), nil
+			})), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
@@ -390,13 +390,13 @@ func TestClient_ResizeVolume_ReturnsProviderConfirmedSize(t *testing.T) {
 			}
 			return jsonOK(t, statusOnlyResponse{Status: true}), nil
 		case 2:
-			if r.URL.Path != volumePath {
-				t.Fatalf("expected path %s, got %s", volumePath, r.URL.Path)
+			if r.URL.Path != volumeListPath {
+				t.Fatalf("expected path %s, got %s", volumeListPath, r.URL.Path)
 			}
 			if r.URL.Query().Get("availability_zone") != "az2" {
 				t.Fatalf("expected az2 lookup zone, got %q", r.URL.Query().Get("availability_zone"))
 			}
-			return jsonOK(t, volumeGetResponse{Status: true, Data: &apiVolume{ID: "vol-1", Size: 3}}), nil
+			return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1", Size: 3})), nil
 		default:
 			t.Fatalf("unexpected request %d", requests)
 			return nil, nil
