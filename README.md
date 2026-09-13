@@ -77,7 +77,7 @@ Store the API key with `nomad var put nobus/csi api_key="$NOBUS_API_KEY"`. Use `
 
 CSI plugins are not in the data path after a volume is mounted. A Nomad client-agent restart must not detach a still-running workload. Keep the Nomad client `data_dir` on persistent host storage so volume claims and mount metadata survive the restart.
 
-Every stateful workload group that uses this driver should keep the original allocation during a client disconnect:
+The controller and node plugin jobs already keep their allocations during a client disconnect. Every stateful workload group that uses this driver should do the same:
 
 ```hcl
 disconnect {

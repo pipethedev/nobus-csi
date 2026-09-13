@@ -3,6 +3,12 @@ job "nobus-csi-node" {
   type        = "system"
 
   group "node" {
+    disconnect {
+      lost_after = "24h"
+      replace    = false
+      reconcile  = "keep_original"
+    }
+
     task "plugin" {
       driver = "docker"
 

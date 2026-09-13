@@ -10,6 +10,12 @@ job "nobus-csi-controller" {
       value    = "true"
     }
 
+    disconnect {
+      lost_after = "24h"
+      replace    = false
+      reconcile  = "keep_original"
+    }
+
     task "plugin" {
       driver = "docker"
       user   = "root"
