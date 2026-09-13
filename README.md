@@ -73,6 +73,22 @@ nomad volume register deploy/nomad/register-volume.hcl
 
 Store the API key with `nomad var put nobus/csi api_key="$NOBUS_API_KEY"`. Use `stage_publish_base_dir` with a non-default path in tests. For single-writer volumes, avoid rolling update settings that force a new allocation to claim the same volume before the old allocation releases it.
 
+### Restart Safety
+
+CSI plugins are not in the data path after a volume is mounted. A Nomad client-agent restart must not detach a still-running workload. Keep the Nomad client `data_dir` on persistent host storage so volume claims and mount metadata survive the restart.
+
+Every stateful workload group that uses this driver should keep the original allocation during a client disconnect:
+
+```hcl
+disconnect {
+  lost_after = "24h"
+  replace    = false
+  reconcile  = "keep_original"
+}
+```
+
+Drain a node with `nomad node drain` before an intentional shutdown so plugins unmount and unpublish after the workload stops. If a node is permanently lost, fence it and migrate the volume by hand. Nomad will not automatically move a single-writer volume that may still be mounted.
+
 ## Kubernetes
 
 The Kubernetes manifests are under `deploy/kubernetes`. They use CSI sidecars, but the driver itself does not import Kubernetes clients or depend on Kubernetes-only volume context.

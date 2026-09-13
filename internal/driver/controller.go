@@ -275,14 +275,14 @@ func (d *Driver) ControllerUnpublishVolume(ctx context.Context, req *csi.Control
 	if req.GetVolumeId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume id is required")
 	}
+	if req.GetNodeId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "node id is required")
+	}
 	unlock := d.locks.TryLock(req.GetVolumeId())
 	if unlock == nil {
 		return nil, status.Error(codes.Aborted, "another operation is in flight for this volume")
 	}
 	defer unlock()
-	if req.GetNodeId() == "" {
-		return d.unpublishAll(ctx, req.GetVolumeId())
-	}
 	zone := d.config.AvailabilityZone
 	volume, err := d.cloud.GetVolumeByID(ctx, req.GetVolumeId())
 	if err != nil {
@@ -302,25 +302,6 @@ func (d *Driver) ControllerUnpublishVolume(ctx context.Context, req *csi.Control
 			return &csi.ControllerUnpublishVolumeResponse{}, nil
 		}
 		return nil, statusError(err)
-	}
-	return &csi.ControllerUnpublishVolumeResponse{}, nil
-}
-
-func (d *Driver) unpublishAll(ctx context.Context, volumeID string) (*csi.ControllerUnpublishVolumeResponse, error) {
-	volume, err := d.cloud.GetVolumeByID(ctx, volumeID)
-	if err != nil {
-		if errors.Is(err, cloud.ErrNotFound) {
-			return &csi.ControllerUnpublishVolumeResponse{}, nil
-		}
-		return nil, statusError(err)
-	}
-	for _, attachment := range volume.Attachments {
-		if err := d.cloud.DetachVolume(ctx, volumeID, attachment.InstanceID, volume.AvailabilityZone); err != nil {
-			if errors.Is(err, cloud.ErrNotFound) {
-				continue
-			}
-			return nil, statusError(err)
-		}
 	}
 	return &csi.ControllerUnpublishVolumeResponse{}, nil
 }

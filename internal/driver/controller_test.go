@@ -136,7 +136,7 @@ func TestControllerUnpublishVolume_MissingNode_ReturnsOK(t *testing.T) {
 	}
 }
 
-func TestControllerUnpublishVolume_EmptyNodeDetachesAll(t *testing.T) {
+func TestControllerUnpublishVolume_EmptyNode_ReturnsInvalidArgument(t *testing.T) {
 	driver := newTestDriver()
 	created, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
 	if err != nil {
@@ -152,15 +152,54 @@ func TestControllerUnpublishVolume_EmptyNodeDetachesAll(t *testing.T) {
 	_, err = driver.ControllerUnpublishVolume(context.Background(), &csi.ControllerUnpublishVolumeRequest{
 		VolumeId: created.GetVolume().GetVolumeId(),
 	})
-	if err != nil {
-		t.Fatalf("unpublish all: %v", err)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %s (%v)", status.Code(err), err)
 	}
 	volume, err := driver.cloud.GetVolumeByID(context.Background(), created.GetVolume().GetVolumeId())
 	if err != nil {
 		t.Fatalf("get volume: %v", err)
 	}
-	if len(volume.Attachments) != 0 {
-		t.Fatalf("expected no attachments, got %+v", volume.Attachments)
+	if !attachedToNode(*volume, "server-a") {
+		t.Fatalf("expected volume to stay attached, got %+v", volume.Attachments)
+	}
+}
+
+func TestControllerPublishVolume_RestartedDriverReusesSameNodeAttachment(t *testing.T) {
+	provider := cloud.NewFake(cloud.InstanceMetadata{
+		InstanceID:        "server-a",
+		AvailabilityZone:  "az1",
+		Region:            "region",
+		MaxVolumesPerNode: 32,
+	})
+	first := New(testConfig(), provider, mount.NewFake())
+	created, err := first.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	firstPublish, err := first.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: created.GetVolume().GetVolumeId(),
+		NodeId:   "server-a",
+	})
+	if err != nil {
+		t.Fatalf("publish volume: %v", err)
+	}
+	second := New(testConfig(), provider, mount.NewFake())
+	secondPublish, err := second.ControllerPublishVolume(context.Background(), &csi.ControllerPublishVolumeRequest{
+		VolumeId: created.GetVolume().GetVolumeId(),
+		NodeId:   "server-a",
+	})
+	if err != nil {
+		t.Fatalf("republish after restart: %v", err)
+	}
+	if secondPublish.GetPublishContext()["device_path"] != firstPublish.GetPublishContext()["device_path"] {
+		t.Fatalf("expected reused device %q, got %q", firstPublish.GetPublishContext()["device_path"], secondPublish.GetPublishContext()["device_path"])
+	}
+	volume, err := second.cloud.GetVolumeByID(context.Background(), created.GetVolume().GetVolumeId())
+	if err != nil {
+		t.Fatalf("get volume: %v", err)
+	}
+	if !attachedToNode(*volume, "server-a") {
+		t.Fatalf("expected volume to stay attached, got %+v", volume.Attachments)
 	}
 }
 

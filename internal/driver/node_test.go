@@ -80,6 +80,68 @@ func TestNodeUnpublishVolume_MissingVolumeID_ReturnsInvalidArgument(t *testing.T
 	}
 }
 
+func TestNodeStageVolume_RestartedDriverLeavesExistingMount(t *testing.T) {
+	mounter := mount.NewFake()
+	provider := cloud.NewFake(cloud.InstanceMetadata{InstanceID: "server-1"})
+	req := &csi.NodeStageVolumeRequest{
+		VolumeId:          "vol-1",
+		StagingTargetPath: "/staging",
+		PublishContext:    map[string]string{"device_path": "/dev/vdc"},
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: mountAccess(),
+			AccessMode: &csi.VolumeCapability_AccessMode{
+				Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+			},
+		},
+	}
+	first := New(testConfig(), provider, mounter)
+	if _, err := first.NodeStageVolume(context.Background(), req); err != nil {
+		t.Fatalf("stage volume: %v", err)
+	}
+	second := New(testConfig(), provider, mounter)
+	if _, err := second.NodeStageVolume(context.Background(), req); err != nil {
+		t.Fatalf("restage after restart: %v", err)
+	}
+	mounted, err := mounter.IsMounted(context.Background(), "/staging")
+	if err != nil {
+		t.Fatalf("inspect staging mount: %v", err)
+	}
+	if !mounted {
+		t.Fatalf("expected staging path to stay mounted")
+	}
+}
+
+func TestNodePublishVolume_RestartedDriverLeavesExistingMount(t *testing.T) {
+	mounter := mount.NewFake()
+	provider := cloud.NewFake(cloud.InstanceMetadata{InstanceID: "server-1"})
+	req := &csi.NodePublishVolumeRequest{
+		VolumeId:          "vol-1",
+		TargetPath:        "/target",
+		StagingTargetPath: "/staging",
+		VolumeCapability: &csi.VolumeCapability{
+			AccessType: mountAccess(),
+			AccessMode: &csi.VolumeCapability_AccessMode{
+				Mode: csi.VolumeCapability_AccessMode_SINGLE_NODE_WRITER,
+			},
+		},
+	}
+	first := New(testConfig(), provider, mounter)
+	if _, err := first.NodePublishVolume(context.Background(), req); err != nil {
+		t.Fatalf("publish volume: %v", err)
+	}
+	second := New(testConfig(), provider, mounter)
+	if _, err := second.NodePublishVolume(context.Background(), req); err != nil {
+		t.Fatalf("republish after restart: %v", err)
+	}
+	mounted, err := mounter.IsMounted(context.Background(), "/target")
+	if err != nil {
+		t.Fatalf("inspect target mount: %v", err)
+	}
+	if !mounted {
+		t.Fatalf("expected target path to stay mounted")
+	}
+}
+
 func TestNodePublishVolume_BlockModeResolvesDevice(t *testing.T) {
 	mounter := mount.NewFake()
 	driver := New(testConfig(), cloud.NewFake(cloud.InstanceMetadata{InstanceID: "server-1"}), mounter)
