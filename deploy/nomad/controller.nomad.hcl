@@ -31,6 +31,7 @@ job "nobus-csi-controller" {
 
       env {
         NOBUS_API_URL           = "https://cloud-api.nobus.io"
+        NOBUS_API_KEY           = "replace-me"
         NOBUS_PROJECT_ID        = "replace-me"
         NOBUS_AVAILABILITY_ZONE = "replace-me"
       }
@@ -39,7 +40,7 @@ job "nobus-csi-controller" {
         destination = "secrets/nobus.env"
         env         = true
         data        = <<EOH
-NOBUS_API_KEY={{ with nomadVar "nobus/csi" }}{{ .api_key }}{{ end }}
+{{- with nomadVar "nobus/csi" }}NOBUS_API_KEY={{ .api_key }}{{ end -}}
 EOH
       }
 

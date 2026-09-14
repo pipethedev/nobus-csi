@@ -71,7 +71,7 @@ nomad volume create deploy/nomad/example-volume.hcl
 nomad volume register deploy/nomad/register-volume.hcl
 ```
 
-Store the API key with `nomad var put nobus/csi api_key="$NOBUS_API_KEY"`. Use `stage_publish_base_dir` with a non-default path in tests. For single-writer volumes, avoid rolling update settings that force a new allocation to claim the same volume before the old allocation releases it.
+Replace the `replace-me` placeholders, including `NOBUS_API_KEY`. `nomad var put nobus/csi api_key="$NOBUS_API_KEY"` overrides the jobspec value. Use `stage_publish_base_dir` with a non-default path in tests. For single-writer volumes, avoid rolling update settings that force a new allocation to claim the same volume before the old allocation releases it.
 
 ### Restart Safety
 
