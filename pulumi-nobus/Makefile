@@ -33,7 +33,12 @@ install: build
 	@echo "Or use: PULUMI_DEBUG_PROVIDERS=nobus=$(BIN)"
 
 test:
-	cd provider && go test ./...
+	cd provider && go test ./pkg/...
+
+cover:
+	cd provider && go test ./pkg/... -coverprofile=coverage.out -covermode=atomic
+	cd provider && go tool cover -func=coverage.out | grep total
+	@echo "HTML: cd provider && go tool cover -html=coverage.out"
 
 tidy:
 	cd provider && go mod tidy

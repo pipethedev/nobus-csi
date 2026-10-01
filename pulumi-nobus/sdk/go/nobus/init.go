@@ -43,6 +43,10 @@ func (m *module) Construct(ctx *pulumi.Context, name, typ, urn string) (r pulumi
 		r = &Volume{}
 	case "nobus:index:VolumeAttachment":
 		r = &VolumeAttachment{}
+	case "nobus:index:VolumeBackup":
+		r = &VolumeBackup{}
+	case "nobus:index:VolumeSnapshot":
+		r = &VolumeSnapshot{}
 	default:
 		return nil, fmt.Errorf("unknown resource type: %s", typ)
 	}

@@ -36,10 +36,7 @@ func (*KeyPair) Annotate(a infer.Annotator) {
 }
 
 func (*KeyPair) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (KeyPairArgs, []p.CheckFailure, error) {
-	return checkResourceArgs(ctx, newInputs,
-		func(a *KeyPairArgs) *string { return &a.AvailabilityZone },
-		func(a *KeyPairArgs) *string { return &a.ProjectID },
-	)
+	return checkResourceArgs(ctx, newInputs, func(a *KeyPairArgs) string { return a.AvailabilityZone })
 }
 
 func (*KeyPair) Create(ctx context.Context, name string, input KeyPairArgs, preview bool) (string, KeyPairState, error) {
@@ -163,10 +160,7 @@ func (*Instance) Annotate(a infer.Annotator) {
 }
 
 func (*Instance) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (InstanceArgs, []p.CheckFailure, error) {
-	args, failures, err := checkResourceArgs(ctx, newInputs,
-		func(a *InstanceArgs) *string { return &a.AvailabilityZone },
-		func(a *InstanceArgs) *string { return &a.ProjectID },
-	)
+	args, failures, err := checkResourceArgs(ctx, newInputs, func(a *InstanceArgs) string { return a.AvailabilityZone })
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}

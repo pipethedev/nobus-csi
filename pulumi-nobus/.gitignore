@@ -11,4 +11,5 @@ examples/**/bin/
 examples/**/.pulumi/
 provider/tidy.err
 provider/build.err
+provider/coverage.out
 .DS_Store

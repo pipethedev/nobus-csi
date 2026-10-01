@@ -12,12 +12,14 @@ API reference: https://cloud-api.nobus.io/api/v3/openapi.json
 | `nobus.Instance` | Compute server |
 | `nobus.Volume` | Block volume |
 | `nobus.VolumeAttachment` | Attach volume to instance |
+| `nobus.VolumeSnapshot` | Point-in-time volume snapshot |
+| `nobus.VolumeBackup` | Volume backup |
 | `nobus.Network` | Network + subnet + router bundle |
 | `nobus.Subnet` / `Port` / `Router` | Fine-grained networking |
 | `nobus.SecurityGroup` / `SecurityGroupRule` | Firewall rules |
 | `nobus.FloatingIp` | Public floating IP |
 
-Invokes: `GetFlavor`, `GetImage`, `GetProject`.
+Invokes: `GetFlavor`, `GetImage`, `GetProject`, `GetAvailabilityZones`.
 
 ## Availability zones
 
@@ -67,6 +69,7 @@ Volume attachments use `az/projectId/volumeId:instanceId`.
 
 - **Instance**: `privateIpv4`, `publicIpv4`, `ipv4Addresses`, `ipv6Addresses`, `networks`, `status`
 - **Volume**: `status`, `attachedTo`, `device`, `isMultiattach`
+- **VolumeSnapshot** / **VolumeBackup**: `status`, `size`, `createdAt`
 - **Network**: `subnetId`, `routerId`, `status`, `mtu`, `subnets`
 
 ## Build and install

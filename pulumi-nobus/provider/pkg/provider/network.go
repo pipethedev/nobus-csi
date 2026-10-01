@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 
 	p "github.com/pulumi/pulumi-go-provider"
 	"github.com/pulumi/pulumi-go-provider/infer"
@@ -44,10 +45,7 @@ func (*Network) Annotate(a infer.Annotator) {
 }
 
 func (*Network) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (NetworkArgs, []p.CheckFailure, error) {
-	args, failures, err := checkResourceArgs(ctx, newInputs,
-		func(a *NetworkArgs) *string { return &a.AvailabilityZone },
-		func(a *NetworkArgs) *string { return &a.ProjectID },
-	)
+	args, failures, err := checkResourceArgs(ctx, newInputs, func(a *NetworkArgs) string { return a.AvailabilityZone })
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}
@@ -90,10 +88,11 @@ func (*Network) Create(ctx context.Context, name string, input NetworkArgs, prev
 	}
 	state.SubnetID = created.SubnetID
 	state.RouterID = created.RouterID
-	if net, err := cfg.Client().GetNetwork(ctx, projectID, az, created.NetworkID); err == nil {
-		state = enrichNetworkState(state, net)
+	net, err := cfg.Client().GetNetwork(ctx, projectID, az, created.NetworkID)
+	if err != nil {
+		return ScopedID(az, projectID, created.NetworkID), state, fmt.Errorf("read network %s: %w", created.NetworkID, err)
 	}
-	return ScopedID(az, projectID, created.NetworkID), state, nil
+	return ScopedID(az, projectID, created.NetworkID), enrichNetworkState(state, net), nil
 }
 
 func enrichNetworkState(state NetworkState, net *nobusapi.Network) NetworkState {
@@ -221,10 +220,7 @@ func (*Subnet) Annotate(a infer.Annotator) {
 }
 
 func (*Subnet) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (SubnetArgs, []p.CheckFailure, error) {
-	args, failures, err := checkResourceArgs(ctx, newInputs,
-		func(a *SubnetArgs) *string { return &a.AvailabilityZone },
-		func(a *SubnetArgs) *string { return &a.ProjectID },
-	)
+	args, failures, err := checkResourceArgs(ctx, newInputs, func(a *SubnetArgs) string { return a.AvailabilityZone })
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}
@@ -375,10 +371,7 @@ func (*Port) Annotate(a infer.Annotator) {
 }
 
 func (*Port) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (PortArgs, []p.CheckFailure, error) {
-	args, failures, err := checkResourceArgs(ctx, newInputs,
-		func(a *PortArgs) *string { return &a.AvailabilityZone },
-		func(a *PortArgs) *string { return &a.ProjectID },
-	)
+	args, failures, err := checkResourceArgs(ctx, newInputs, func(a *PortArgs) string { return a.AvailabilityZone })
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}
@@ -526,10 +519,7 @@ func (*Router) Annotate(a infer.Annotator) {
 }
 
 func (*Router) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (RouterArgs, []p.CheckFailure, error) {
-	args, failures, err := checkResourceArgs(ctx, newInputs,
-		func(a *RouterArgs) *string { return &a.AvailabilityZone },
-		func(a *RouterArgs) *string { return &a.ProjectID },
-	)
+	args, failures, err := checkResourceArgs(ctx, newInputs, func(a *RouterArgs) string { return a.AvailabilityZone })
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}

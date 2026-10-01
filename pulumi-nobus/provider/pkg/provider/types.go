@@ -13,7 +13,7 @@ const (
 	AvailabilityZoneNobusWAAZ1 = "nobus-wa-az1"
 )
 
-// Common flavor name helpers (resolved via getFlavor to IDs at runtime).
+// Common Nobus flavor names. Resolve them with getFlavor at runtime.
 const (
 	FlavorS1Small  = "s1.small"
 	FlavorS1Medium = "s1.medium"

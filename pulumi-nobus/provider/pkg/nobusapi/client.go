@@ -37,6 +37,7 @@ type Config struct {
 	Endpoint   string
 	APIKey     string
 	HTTPClient *http.Client
+	Poll       time.Duration
 }
 
 func NewClient(cfg Config) (*Client, error) {
@@ -58,7 +59,11 @@ func NewClient(cfg Config) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultTimeout}
 	}
-	return &Client{base: base, http: httpClient, apiKey: cfg.APIKey, poll: defaultPoll}, nil
+	poll := cfg.Poll
+	if poll <= 0 {
+		poll = defaultPoll
+	}
+	return &Client{base: base, http: httpClient, apiKey: cfg.APIKey, poll: poll}, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, out any) error {
@@ -118,7 +123,7 @@ func (c *Client) doOnce(ctx context.Context, method, path string, query url.Valu
 	if err != nil {
 		return fmt.Errorf("call Nobus API: %w", errors.Join(ErrUnavailable, err))
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		return mapHTTPError(resp)

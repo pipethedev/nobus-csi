@@ -30,10 +30,7 @@ func (*SecurityGroup) Annotate(a infer.Annotator) {
 }
 
 func (*SecurityGroup) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (SecurityGroupArgs, []p.CheckFailure, error) {
-	args, failures, err := checkResourceArgs(ctx, newInputs,
-		func(a *SecurityGroupArgs) *string { return &a.AvailabilityZone },
-		func(a *SecurityGroupArgs) *string { return &a.ProjectID },
-	)
+	args, failures, err := checkResourceArgs(ctx, newInputs, func(a *SecurityGroupArgs) string { return a.AvailabilityZone })
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}
@@ -154,10 +151,7 @@ func (*SecurityGroupRule) Annotate(a infer.Annotator) {
 }
 
 func (*SecurityGroupRule) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (SecurityGroupRuleArgs, []p.CheckFailure, error) {
-	args, failures, err := checkResourceArgs(ctx, newInputs,
-		func(a *SecurityGroupRuleArgs) *string { return &a.AvailabilityZone },
-		func(a *SecurityGroupRuleArgs) *string { return &a.ProjectID },
-	)
+	args, failures, err := checkResourceArgs(ctx, newInputs, func(a *SecurityGroupRuleArgs) string { return a.AvailabilityZone })
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}
@@ -281,10 +275,7 @@ func (*FloatingIp) Annotate(a infer.Annotator) {
 }
 
 func (*FloatingIp) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (FloatingIpArgs, []p.CheckFailure, error) {
-	args, failures, err := checkResourceArgs(ctx, newInputs,
-		func(a *FloatingIpArgs) *string { return &a.AvailabilityZone },
-		func(a *FloatingIpArgs) *string { return &a.ProjectID },
-	)
+	args, failures, err := checkResourceArgs(ctx, newInputs, func(a *FloatingIpArgs) string { return a.AvailabilityZone })
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}

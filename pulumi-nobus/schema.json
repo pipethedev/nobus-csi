@@ -2,7 +2,7 @@
   "name": "nobus",
   "displayName": "Nobus",
   "version": "0.1.0",
-  "description": "A Pulumi provider for Nobus Cloud (servers, SSH keys, volumes, networking).",
+  "description": "A Pulumi provider for Nobus Cloud (servers, SSH keys, volumes, snapshots, backups, networking).",
   "keywords": [
     "pulumi",
     "nobus",
@@ -1052,9 +1052,210 @@
         "instanceId",
         "volumeId"
       ]
+    },
+    "nobus:index:VolumeBackup": {
+      "description": "A Nobus volume backup.",
+      "properties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "container": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "incremental": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "snapshotId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "volumeId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "createdAt",
+        "size",
+        "status",
+        "volumeId"
+      ],
+      "inputProperties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "container": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "incremental": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "snapshotId": {
+          "type": "string"
+        },
+        "volumeId": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "volumeId"
+      ]
+    },
+    "nobus:index:VolumeSnapshot": {
+      "description": "A point-in-time snapshot of a Nobus volume.",
+      "properties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "status": {
+          "type": "string"
+        },
+        "volumeId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "createdAt",
+        "size",
+        "status",
+        "volumeId"
+      ],
+      "inputProperties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "force": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "volumeId": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "volumeId"
+      ]
     }
   },
   "functions": {
+    "nobus:index:getAvailabilityZones": {
+      "description": "List Nobus availability zones visible to a project.",
+      "inputs": {
+        "properties": {
+          "availabilityZone": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": [
+          "availabilityZone"
+        ]
+      },
+      "outputs": {
+        "properties": {
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "names"
+        ],
+        "type": "object"
+      }
+    },
     "nobus:index:getFlavor": {
       "description": "Look up a Nobus flavor by name or ID.",
       "inputs": {

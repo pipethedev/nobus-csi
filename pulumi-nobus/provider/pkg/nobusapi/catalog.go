@@ -27,6 +27,10 @@ type Project struct {
 	IsDefault        bool   `json:"is_default"`
 }
 
+type AvailabilityZone struct {
+	Name string `json:"name"`
+}
+
 func (c *Client) ListFlavors(ctx context.Context, projectID, availabilityZone string) ([]Flavor, error) {
 	var resp struct {
 		Data json.RawMessage `json:"data"`
@@ -94,4 +98,14 @@ func (c *Client) FindProject(ctx context.Context, nameOrID string) (*Project, er
 		}
 	}
 	return nil, fmt.Errorf("project %s: %w", nameOrID, ErrNotFound)
+}
+
+func (c *Client) ListAvailabilityZones(ctx context.Context, projectID, availabilityZone string) ([]AvailabilityZone, error) {
+	var resp struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v3/volume/availability_zone/list", projectQuery(projectID, availabilityZone), nil, &resp); err != nil {
+		return nil, err
+	}
+	return decodeList[AvailabilityZone](resp.Data)
 }

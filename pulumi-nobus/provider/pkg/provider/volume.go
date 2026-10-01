@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"maps"
+	"strings"
 
 	p "github.com/pulumi/pulumi-go-provider"
 	"github.com/pulumi/pulumi-go-provider/infer"
@@ -42,10 +43,7 @@ func (*Volume) Annotate(a infer.Annotator) {
 }
 
 func (*Volume) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (VolumeArgs, []p.CheckFailure, error) {
-	args, failures, err := checkResourceArgs(ctx, newInputs,
-		func(a *VolumeArgs) *string { return &a.AvailabilityZone },
-		func(a *VolumeArgs) *string { return &a.ProjectID },
-	)
+	args, failures, err := checkResourceArgs(ctx, newInputs, func(a *VolumeArgs) string { return a.AvailabilityZone })
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}
@@ -209,10 +207,7 @@ func (*VolumeAttachment) Annotate(a infer.Annotator) {
 }
 
 func (*VolumeAttachment) Check(ctx context.Context, name string, oldInputs, newInputs resource.PropertyMap) (VolumeAttachmentArgs, []p.CheckFailure, error) {
-	args, failures, err := checkResourceArgs(ctx, newInputs,
-		func(a *VolumeAttachmentArgs) *string { return &a.AvailabilityZone },
-		func(a *VolumeAttachmentArgs) *string { return &a.ProjectID },
-	)
+	args, failures, err := checkResourceArgs(ctx, newInputs, func(a *VolumeAttachmentArgs) string { return a.AvailabilityZone })
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}
@@ -267,13 +262,12 @@ func (*VolumeAttachment) Read(ctx context.Context, id string, inputs VolumeAttac
 	volumeID := BareResourceID(cmp.Or(state.VolumeID, inputs.VolumeID))
 	instanceID := BareResourceID(cmp.Or(state.InstanceID, inputs.InstanceID))
 	if volumeID == "" || instanceID == "" {
-		// id may be az/project/volume:instance
-		parts := splitAttachmentID(resourceID)
+		volPart, instPart, ok := strings.Cut(resourceID, ":")
 		if volumeID == "" {
-			volumeID = parts[0]
+			volumeID = volPart
 		}
-		if instanceID == "" && len(parts) > 1 {
-			instanceID = parts[1]
+		if instanceID == "" && ok {
+			instanceID = instPart
 		}
 	}
 	volume, err := cfg.Client().GetVolume(ctx, projectID, az, volumeID)
@@ -320,13 +314,4 @@ func (*VolumeAttachment) Delete(ctx context.Context, id string, state VolumeAtta
 		return nil
 	}
 	return err
-}
-
-func splitAttachmentID(id string) []string {
-	for i := 0; i < len(id); i++ {
-		if id[i] == ':' {
-			return []string{id[:i], id[i+1:]}
-		}
-	}
-	return []string{id}
 }

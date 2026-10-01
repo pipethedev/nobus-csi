@@ -10,39 +10,43 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 )
 
-// checkResourceArgs runs DefaultCheck then ensures availabilityZone is set
-// (from the input or provider default).
+// checkResourceArgs fills provider defaults for a blank availability zone or
+// project, then rejects a resource that still has no availability zone.
 func checkResourceArgs[I any](
 	ctx context.Context,
 	newInputs resource.PropertyMap,
-	getAZ func(*I) *string,
-	getProject func(*I) *string,
+	availabilityZone func(*I) string,
 ) (I, []p.CheckFailure, error) {
-	args, failures, err := infer.DefaultCheck[I](ctx, newInputs)
+	cfg := getConfig(ctx)
+	inputs := newInputs.Copy()
+	if cfg != nil {
+		if blankInput(inputs, "availabilityZone") && cfg.AvailabilityZone != "" {
+			inputs["availabilityZone"] = resource.NewStringProperty(cfg.AvailabilityZone)
+		}
+		if blankInput(inputs, "projectId") && cfg.ProjectID != "" {
+			inputs["projectId"] = resource.NewStringProperty(cfg.ProjectID)
+		}
+	}
+
+	args, failures, err := infer.DefaultCheck[I](ctx, inputs)
 	if err != nil || len(failures) > 0 {
 		return args, failures, err
 	}
-
-	cfg := getConfig(ctx)
-	azPtr := getAZ(&args)
-	if azPtr != nil && strings.TrimSpace(*azPtr) == "" && cfg != nil && cfg.AvailabilityZone != "" {
-		*azPtr = cfg.AvailabilityZone
-	}
-	if azPtr != nil && strings.TrimSpace(*azPtr) == "" {
+	if strings.TrimSpace(availabilityZone(&args)) == "" {
 		failures = append(failures, p.CheckFailure{
 			Property: "availabilityZone",
 			Reason:   "availabilityZone is required (set on the resource or via provider config / NOBUS_AVAILABILITY_ZONE)",
 		})
 	}
-
-	if getProject != nil {
-		projPtr := getProject(&args)
-		if projPtr != nil && strings.TrimSpace(*projPtr) == "" && cfg != nil && cfg.ProjectID != "" {
-			*projPtr = cfg.ProjectID
-		}
-	}
-
 	return args, failures, nil
+}
+
+func blankInput(inputs resource.PropertyMap, key string) bool {
+	value, ok := inputs[resource.PropertyKey(key)]
+	if !ok || value.IsNull() {
+		return true
+	}
+	return value.IsString() && strings.TrimSpace(value.StringValue()) == ""
 }
 
 func stringSlicesEqual(a, b []string) bool {

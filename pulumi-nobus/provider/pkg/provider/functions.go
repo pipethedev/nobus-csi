@@ -99,24 +99,14 @@ func (*GetProject) Call(ctx context.Context, input GetProjectArgs) (GetProjectRe
 		if err != nil {
 			return GetProjectResult{}, err
 		}
-		return GetProjectResult{
-			ProjectID:        project.ID,
-			Name:             project.Name,
-			AvailabilityZone: project.AvailabilityZone,
-			IsDefault:        project.IsDefault,
-		}, nil
+		return projectResult(project), nil
 	}
 	if cfg.ProjectID != "" {
 		project, err := client.FindProject(ctx, cfg.ProjectID)
 		if err != nil {
 			return GetProjectResult{}, err
 		}
-		return GetProjectResult{
-			ProjectID:        project.ID,
-			Name:             project.Name,
-			AvailabilityZone: project.AvailabilityZone,
-			IsDefault:        project.IsDefault,
-		}, nil
+		return projectResult(project), nil
 	}
 	projects, err := client.ListProjects(ctx)
 	if err != nil {
@@ -124,26 +114,58 @@ func (*GetProject) Call(ctx context.Context, input GetProjectArgs) (GetProjectRe
 	}
 	for _, project := range projects {
 		if project.IsDefault {
-			return GetProjectResult{
-				ProjectID:        project.ID,
-				Name:             project.Name,
-				AvailabilityZone: project.AvailabilityZone,
-				IsDefault:        project.IsDefault,
-			}, nil
+			return projectResult(&project), nil
 		}
 	}
 	if len(projects) == 0 {
 		return GetProjectResult{}, fmt.Errorf("project: %w", nobusapi.ErrNotFound)
 	}
-	project := projects[0]
+	return projectResult(&projects[0]), nil
+}
+
+func projectResult(project *nobusapi.Project) GetProjectResult {
 	return GetProjectResult{
 		ProjectID:        project.ID,
 		Name:             project.Name,
 		AvailabilityZone: project.AvailabilityZone,
 		IsDefault:        project.IsDefault,
-	}, nil
+	}
 }
 
 func (*GetProject) Annotate(a infer.Annotator) {
 	a.Describe(&GetProject{}, "Look up a Nobus project by name or ID, or return the default project.")
+}
+
+type GetAvailabilityZones struct{}
+
+type GetAvailabilityZonesArgs struct {
+	AvailabilityZone string `pulumi:"availabilityZone"`
+	ProjectID        string `pulumi:"projectId,optional"`
+}
+
+type GetAvailabilityZonesResult struct {
+	Names []string `pulumi:"names"`
+}
+
+func (*GetAvailabilityZones) Call(ctx context.Context, input GetAvailabilityZonesArgs) (GetAvailabilityZonesResult, error) {
+	cfg := getConfig(ctx)
+	projectID, az, err := cfg.ResolveScope(input.ProjectID, input.AvailabilityZone)
+	if err != nil {
+		return GetAvailabilityZonesResult{}, err
+	}
+	zones, err := cfg.Client().ListAvailabilityZones(ctx, projectID, az)
+	if err != nil {
+		return GetAvailabilityZonesResult{}, err
+	}
+	names := make([]string, 0, len(zones))
+	for _, zone := range zones {
+		if zone.Name != "" {
+			names = append(names, zone.Name)
+		}
+	}
+	return GetAvailabilityZonesResult{Names: names}, nil
+}
+
+func (*GetAvailabilityZones) Annotate(a infer.Annotator) {
+	a.Describe(&GetAvailabilityZones{}, "List Nobus availability zones visible to a project.")
 }

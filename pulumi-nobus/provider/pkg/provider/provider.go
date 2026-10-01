@@ -19,7 +19,7 @@ func Provider() p.Provider {
 	return infer.Provider(infer.Options{
 		Metadata: schema.Metadata{
 			DisplayName:       "Nobus",
-			Description:       "A Pulumi provider for Nobus Cloud (servers, SSH keys, volumes, networking).",
+			Description:       "A Pulumi provider for Nobus Cloud (servers, SSH keys, volumes, snapshots, backups, networking).",
 			Keywords:          []string{"pulumi", "nobus", "cloud", "category/cloud", "kind/native"},
 			Homepage:          "https://cloud.nobus.io",
 			Repository:        "https://github.com/brimble/pulumi-nobus",
@@ -33,6 +33,8 @@ func Provider() p.Provider {
 			infer.Resource[*Instance, InstanceArgs, InstanceState](),
 			infer.Resource[*Volume, VolumeArgs, VolumeState](),
 			infer.Resource[*VolumeAttachment, VolumeAttachmentArgs, VolumeAttachmentState](),
+			infer.Resource[*VolumeSnapshot, VolumeSnapshotArgs, VolumeSnapshotState](),
+			infer.Resource[*VolumeBackup, VolumeBackupArgs, VolumeBackupState](),
 			infer.Resource[*Network, NetworkArgs, NetworkState](),
 			infer.Resource[*Subnet, SubnetArgs, SubnetState](),
 			infer.Resource[*Port, PortArgs, PortState](),
@@ -45,6 +47,7 @@ func Provider() p.Provider {
 			infer.Function[*GetFlavor, GetFlavorArgs, GetFlavorResult](),
 			infer.Function[*GetImage, GetImageArgs, GetImageResult](),
 			infer.Function[*GetProject, GetProjectArgs, GetProjectResult](),
+			infer.Function[*GetAvailabilityZones, GetAvailabilityZonesArgs, GetAvailabilityZonesResult](),
 		},
 		ModuleMap: map[tokens.ModuleName]tokens.ModuleName{
 			"provider": "index",
@@ -98,11 +101,26 @@ func (c *Config) Configure(ctx context.Context) error {
 }
 
 func getConfig(ctx context.Context) *Config {
+	if v, ok := ctx.Value(configContextKey{}).(*Config); ok && v != nil {
+		return v
+	}
 	return infer.GetConfig[*Config](ctx)
+}
+
+type configContextKey struct{}
+
+// ContextWithConfig attaches provider config for unit tests (and local harnesses).
+func ContextWithConfig(ctx context.Context, cfg *Config) context.Context {
+	return context.WithValue(ctx, configContextKey{}, cfg)
 }
 
 func (c *Config) Client() *nobusapi.Client {
 	return c.client
+}
+
+// SetClientForTest injects an API client without going through Configure.
+func (c *Config) SetClientForTest(client *nobusapi.Client) {
+	c.client = client
 }
 
 // ResolveProject returns an explicit project ID or the provider default.
