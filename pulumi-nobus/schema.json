@@ -1,0 +1,1177 @@
+{
+  "name": "nobus",
+  "displayName": "Nobus",
+  "version": "0.1.0",
+  "description": "A Pulumi provider for Nobus Cloud (servers, SSH keys, volumes, networking).",
+  "keywords": [
+    "pulumi",
+    "nobus",
+    "cloud",
+    "category/cloud",
+    "kind/native"
+  ],
+  "homepage": "https://cloud.nobus.io",
+  "license": "Apache-2.0",
+  "repository": "https://github.com/brimble/pulumi-nobus",
+  "pluginDownloadURL": "github://api.github.com/brimble/pulumi-nobus",
+  "publisher": "brimble",
+  "meta": {
+    "moduleFormat": "(.*)"
+  },
+  "config": {
+    "variables": {
+      "apiKey": {
+        "type": "string",
+        "description": "Nobus API key (Bearer token).",
+        "default": "",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_API_KEY"
+          ]
+        },
+        "secret": true
+      },
+      "availabilityZone": {
+        "type": "string",
+        "description": "Optional default availability zone. Prefer setting availabilityZone on each resource (required) — Nobus has multiple AZs.",
+        "default": "",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_AVAILABILITY_ZONE"
+          ]
+        }
+      },
+      "endpoint": {
+        "type": "string",
+        "description": "Nobus API endpoint.",
+        "default": "https://cloud-api.nobus.io",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_ENDPOINT"
+          ]
+        }
+      },
+      "projectId": {
+        "type": "string",
+        "description": "Default project ID when a resource omits projectId.",
+        "default": "",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_PROJECT_ID"
+          ]
+        }
+      }
+    },
+    "defaults": [
+      "apiKey"
+    ]
+  },
+  "provider": {
+    "description": "Configuration for the Nobus provider.",
+    "properties": {
+      "apiKey": {
+        "type": "string",
+        "description": "Nobus API key (Bearer token).",
+        "default": "",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_API_KEY"
+          ]
+        },
+        "secret": true
+      },
+      "availabilityZone": {
+        "type": "string",
+        "description": "Optional default availability zone. Prefer setting availabilityZone on each resource (required) — Nobus has multiple AZs.",
+        "default": "",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_AVAILABILITY_ZONE"
+          ]
+        }
+      },
+      "endpoint": {
+        "type": "string",
+        "description": "Nobus API endpoint.",
+        "default": "https://cloud-api.nobus.io",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_ENDPOINT"
+          ]
+        }
+      },
+      "projectId": {
+        "type": "string",
+        "description": "Default project ID when a resource omits projectId.",
+        "default": "",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_PROJECT_ID"
+          ]
+        }
+      }
+    },
+    "type": "object",
+    "required": [
+      "apiKey"
+    ],
+    "inputProperties": {
+      "apiKey": {
+        "type": "string",
+        "description": "Nobus API key (Bearer token).",
+        "default": "",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_API_KEY"
+          ]
+        },
+        "secret": true
+      },
+      "availabilityZone": {
+        "type": "string",
+        "description": "Optional default availability zone. Prefer setting availabilityZone on each resource (required) — Nobus has multiple AZs.",
+        "default": "",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_AVAILABILITY_ZONE"
+          ]
+        }
+      },
+      "endpoint": {
+        "type": "string",
+        "description": "Nobus API endpoint.",
+        "default": "https://cloud-api.nobus.io",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_ENDPOINT"
+          ]
+        }
+      },
+      "projectId": {
+        "type": "string",
+        "description": "Default project ID when a resource omits projectId.",
+        "default": "",
+        "defaultInfo": {
+          "environment": [
+            "NOBUS_PROJECT_ID"
+          ]
+        }
+      }
+    },
+    "requiredInputs": [
+      "apiKey"
+    ]
+  },
+  "resources": {
+    "nobus:index:FloatingIp": {
+      "description": "A Nobus floating IP.",
+      "properties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "fixedIpAddress": {
+          "type": "string"
+        },
+        "floatingIpAddress": {
+          "type": "string"
+        },
+        "floatingNetworkId": {
+          "type": "string"
+        },
+        "portId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "floatingIpAddress",
+        "floatingNetworkId",
+        "status"
+      ],
+      "inputProperties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "fixedIpAddress": {
+          "type": "string"
+        },
+        "floatingNetworkId": {
+          "type": "string"
+        },
+        "portId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "floatingNetworkId"
+      ]
+    },
+    "nobus:index:Instance": {
+      "description": "A Nobus compute instance (server).",
+      "properties": {
+        "adminPass": {
+          "type": "string",
+          "secret": true
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string"
+        },
+        "deleteVolume": {
+          "type": "boolean"
+        },
+        "flavor": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "ipv4Addresses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ipv6Addresses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keyName": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "networkId": {
+          "type": "string"
+        },
+        "networks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "privateIpv4": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "publicIpv4": {
+          "type": "string"
+        },
+        "securityGroups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "updated": {
+          "type": "string"
+        },
+        "userData": {
+          "type": "string"
+        },
+        "volumeSize": {
+          "type": "integer"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "created",
+        "flavor",
+        "image",
+        "ipv4Addresses",
+        "ipv6Addresses",
+        "keyName",
+        "name",
+        "networks",
+        "privateIpv4",
+        "publicIpv4",
+        "status",
+        "updated"
+      ],
+      "inputProperties": {
+        "adminPass": {
+          "type": "string",
+          "secret": true
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "deleteVolume": {
+          "type": "boolean"
+        },
+        "flavor": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "keyName": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "networkId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "securityGroups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "userData": {
+          "type": "string"
+        },
+        "volumeSize": {
+          "type": "integer"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "flavor",
+        "image",
+        "keyName",
+        "name"
+      ]
+    },
+    "nobus:index:KeyPair": {
+      "description": "An SSH key pair for Nobus instances.",
+      "properties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "type": "string"
+        },
+        "keyPairId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "privateKey": {
+          "type": "string",
+          "secret": true
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "publicKey": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "fingerprint",
+        "keyPairId",
+        "name",
+        "privateKey",
+        "publicKey",
+        "type"
+      ],
+      "inputProperties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "name"
+      ]
+    },
+    "nobus:index:Network": {
+      "description": "A Nobus network bundle (network + subnet + router).",
+      "properties": {
+        "adminStateUp": {
+          "type": "boolean"
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "dnsNameservers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enableSnat": {
+          "type": "boolean"
+        },
+        "externalNetworkId": {
+          "type": "string"
+        },
+        "mtu": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "networkName": {
+          "type": "string"
+        },
+        "portSecurityEnabled": {
+          "type": "boolean"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "routerId": {
+          "type": "string"
+        },
+        "routerName": {
+          "type": "string"
+        },
+        "shared": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "subnetCidr": {
+          "type": "string"
+        },
+        "subnetId": {
+          "type": "string"
+        },
+        "subnets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "mtu",
+        "networkName",
+        "portSecurityEnabled",
+        "routerId",
+        "routerName",
+        "shared",
+        "status",
+        "subnetCidr",
+        "subnetId",
+        "subnets"
+      ],
+      "inputProperties": {
+        "adminStateUp": {
+          "type": "boolean"
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "dnsNameservers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enableSnat": {
+          "type": "boolean"
+        },
+        "externalNetworkId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "networkName": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "routerName": {
+          "type": "string"
+        },
+        "subnetCidr": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "networkName",
+        "routerName",
+        "subnetCidr"
+      ]
+    },
+    "nobus:index:Port": {
+      "description": "A Nobus network port.",
+      "properties": {
+        "adminStateUp": {
+          "type": "boolean"
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "deviceId": {
+          "type": "string"
+        },
+        "deviceOwner": {
+          "type": "string"
+        },
+        "macAddress": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "networkId": {
+          "type": "string"
+        },
+        "portSecurityEnabled": {
+          "type": "boolean"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "securityGroups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "macAddress",
+        "networkId",
+        "status"
+      ],
+      "inputProperties": {
+        "adminStateUp": {
+          "type": "boolean"
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "deviceId": {
+          "type": "string"
+        },
+        "deviceOwner": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "networkId": {
+          "type": "string"
+        },
+        "portSecurityEnabled": {
+          "type": "boolean"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "securityGroups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "networkId"
+      ]
+    },
+    "nobus:index:Router": {
+      "description": "A Nobus router.",
+      "properties": {
+        "adminStateUp": {
+          "type": "boolean"
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "name",
+        "status"
+      ],
+      "inputProperties": {
+        "adminStateUp": {
+          "type": "boolean"
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "name"
+      ]
+    },
+    "nobus:index:SecurityGroup": {
+      "description": "A Nobus security group.",
+      "properties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "name"
+      ],
+      "inputProperties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "name"
+      ]
+    },
+    "nobus:index:SecurityGroupRule": {
+      "description": "A Nobus security group rule.",
+      "properties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string"
+        },
+        "ethertype": {
+          "type": "string"
+        },
+        "portRangeMax": {
+          "type": "integer"
+        },
+        "portRangeMin": {
+          "type": "integer"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "remoteGroupId": {
+          "type": "string"
+        },
+        "remoteIpPrefix": {
+          "type": "string"
+        },
+        "securityGroupId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "direction",
+        "securityGroupId"
+      ],
+      "inputProperties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "direction": {
+          "type": "string"
+        },
+        "ethertype": {
+          "type": "string"
+        },
+        "portRangeMax": {
+          "type": "integer"
+        },
+        "portRangeMin": {
+          "type": "integer"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "remoteGroupId": {
+          "type": "string"
+        },
+        "remoteIpPrefix": {
+          "type": "string"
+        },
+        "securityGroupId": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "direction",
+        "securityGroupId"
+      ]
+    },
+    "nobus:index:Subnet": {
+      "description": "A Nobus subnet.",
+      "properties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "cidr": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "dnsNameservers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enableDhcp": {
+          "type": "boolean"
+        },
+        "gatewayIp": {
+          "type": "string"
+        },
+        "ipVersion": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "networkId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "cidr",
+        "ipVersion",
+        "networkId"
+      ],
+      "inputProperties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "cidr": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "dnsNameservers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enableDhcp": {
+          "type": "boolean"
+        },
+        "gatewayIp": {
+          "type": "string"
+        },
+        "ipVersion": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "networkId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "cidr",
+        "ipVersion",
+        "networkId"
+      ]
+    },
+    "nobus:index:Volume": {
+      "description": "A Nobus block storage volume.",
+      "properties": {
+        "attachedTo": {
+          "type": "string"
+        },
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "device": {
+          "type": "string"
+        },
+        "imageRef": {
+          "type": "string"
+        },
+        "isMultiattach": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "snapshotId": {
+          "type": "string"
+        },
+        "sourceVolId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "volumeType": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "attachedTo",
+        "availabilityZone",
+        "device",
+        "isMultiattach",
+        "size",
+        "status"
+      ],
+      "inputProperties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "imageRef": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "multiattach": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "snapshotId": {
+          "type": "string"
+        },
+        "sourceVolId": {
+          "type": "string"
+        },
+        "volumeType": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "size"
+      ]
+    },
+    "nobus:index:VolumeAttachment": {
+      "description": "Attaches a Nobus volume to an instance.",
+      "properties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "device": {
+          "type": "string"
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "volumeId": {
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "required": [
+        "availabilityZone",
+        "device",
+        "instanceId",
+        "volumeId"
+      ],
+      "inputProperties": {
+        "availabilityZone": {
+          "type": "string"
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "projectId": {
+          "type": "string"
+        },
+        "volumeId": {
+          "type": "string"
+        }
+      },
+      "requiredInputs": [
+        "availabilityZone",
+        "instanceId",
+        "volumeId"
+      ]
+    }
+  },
+  "functions": {
+    "nobus:index:getFlavor": {
+      "description": "Look up a Nobus flavor by name or ID.",
+      "inputs": {
+        "properties": {
+          "availabilityZone": {
+            "type": "string"
+          },
+          "nameOrId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": [
+          "availabilityZone",
+          "nameOrId"
+        ]
+      },
+      "outputs": {
+        "properties": {
+          "disk": {
+            "type": "integer"
+          },
+          "flavorId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ram": {
+            "type": "integer"
+          },
+          "vcpus": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "disk",
+          "flavorId",
+          "name",
+          "ram",
+          "vcpus"
+        ],
+        "type": "object"
+      }
+    },
+    "nobus:index:getImage": {
+      "description": "Look up a Nobus image by name or ID.",
+      "inputs": {
+        "properties": {
+          "availabilityZone": {
+            "type": "string"
+          },
+          "nameOrId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": [
+          "availabilityZone",
+          "nameOrId"
+        ]
+      },
+      "outputs": {
+        "properties": {
+          "imageId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "imageId",
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    "nobus:index:getProject": {
+      "description": "Look up a Nobus project by name or ID, or return the default project.",
+      "inputs": {
+        "properties": {
+          "nameOrId": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "outputs": {
+        "properties": {
+          "availabilityZone": {
+            "type": "string"
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "availabilityZone",
+          "isDefault",
+          "name",
+          "projectId"
+        ],
+        "type": "object"
+      }
+    }
+  }
+}

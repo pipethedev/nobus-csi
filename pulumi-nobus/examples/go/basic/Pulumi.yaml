@@ -1,0 +1,3 @@
+name: nobus-basic
+runtime: go
+description: Basic Nobus Pulumi example (network, keypair, instance, volume)

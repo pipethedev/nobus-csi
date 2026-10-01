@@ -1,0 +1,14 @@
+bin/
+dist/
+.idea/
+.vscode/
+*.exe
+*.test
+vendor/
+third_party/
+.pulumi-plugins/
+examples/**/bin/
+examples/**/.pulumi/
+provider/tidy.err
+provider/build.err
+.DS_Store

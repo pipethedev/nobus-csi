@@ -1,0 +1,5 @@
+# Optional: append these replaces when building offline from vendored third_party/
+replace github.com/pulumi/pulumi-go-provider => ../third_party/pulumi-go-provider
+replace github.com/pulumi/pulumi/sdk/v3 => ../third_party/pulumi-sdk
+replace github.com/pulumi/pulumi/pkg/v3 => ../third_party/pulumi-pkg
+replace github.com/pulumi/esc => ../third_party/esc
