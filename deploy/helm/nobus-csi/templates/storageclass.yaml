@@ -19,6 +19,9 @@ parameters:
   {{- if .Values.nobus.volumeType }}
   volume_type: {{ .Values.nobus.volumeType | quote }}
   {{- end }}
+  {{- if .Values.nobus.encrypted }}
+  encrypted: "true"
+  {{- end }}
   csi.storage.k8s.io/provisioner-secret-name: {{ include "nobus-csi.secretName" . | quote }}
   csi.storage.k8s.io/provisioner-secret-namespace: {{ include "nobus-csi.namespace" . | quote }}
   csi.storage.k8s.io/controller-publish-secret-name: {{ include "nobus-csi.secretName" . | quote }}

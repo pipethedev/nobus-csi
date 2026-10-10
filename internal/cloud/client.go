@@ -73,6 +73,7 @@ func (c *Client) CreateVolume(ctx context.Context, spec VolumeSpec) (*Volume, er
 		VolumeType:       spec.Type,
 		AvailabilityZone: spec.AvailabilityZone,
 		SnapshotID:       spec.SnapshotID,
+		Encrypted:        spec.Encrypted,
 		Metadata:         spec.Metadata,
 		ProjectID:        spec.ProjectID,
 	})
@@ -425,6 +426,7 @@ type volumeCreateRequest struct {
 	VolumeType       string            `json:"volume_type,omitempty"`
 	AvailabilityZone string            `json:"availability_zone"`
 	SnapshotID       string            `json:"snapshot_id,omitempty"`
+	Encrypted        bool              `json:"encrypted,omitempty"`
 	Metadata         map[string]string `json:"metadata,omitempty"`
 	ProjectID        string            `json:"project_id"`
 }
@@ -487,6 +489,7 @@ type apiVolume struct {
 	Status           VolumeStatus      `json:"status"`
 	AvailabilityZone string            `json:"availability_zone"`
 	VolumeType       string            `json:"volume_type"`
+	Encrypted        bool              `json:"encrypted"`
 	Multiattach      bool              `json:"multiattach"`
 	Metadata         map[string]string `json:"metadata"`
 	Attachments      []apiAttachment   `json:"attachments"`
@@ -507,6 +510,7 @@ func (v apiVolume) toDomain() Volume {
 		Status:           v.Status,
 		AvailabilityZone: v.AvailabilityZone,
 		Type:             v.VolumeType,
+		Encrypted:        v.Encrypted,
 		Multiattach:      v.Multiattach,
 		Metadata:         v.Metadata,
 		Attachments:      attachments,

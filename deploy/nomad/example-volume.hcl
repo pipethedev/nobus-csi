@@ -18,4 +18,5 @@ mount_options {
 parameters {
   project_id        = "replace-me"
   availability_zone = "replace-me"
+  # encrypted       = "true"
 }

@@ -44,6 +44,50 @@ func TestCreateVolume_ExistingNameDifferentSize_ReturnsAlreadyExists(t *testing.
 	}
 }
 
+func TestCreateVolume_Encrypted_PublishesVolumeContext(t *testing.T) {
+	driver := newTestDriver()
+	req := createVolumeRequest(testGiB)
+	req.Parameters[paramEncrypted] = "true"
+	created, err := driver.CreateVolume(context.Background(), req)
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if created.GetVolume().GetVolumeContext()[paramEncrypted] != "true" {
+		t.Fatalf("expected encrypted volume context, got %#v", created.GetVolume().GetVolumeContext())
+	}
+	again, err := driver.CreateVolume(context.Background(), req)
+	if err != nil {
+		t.Fatalf("create existing encrypted volume: %v", err)
+	}
+	if again.GetVolume().GetVolumeId() != created.GetVolume().GetVolumeId() {
+		t.Fatalf("expected existing volume id %q, got %q", created.GetVolume().GetVolumeId(), again.GetVolume().GetVolumeId())
+	}
+}
+
+func TestCreateVolume_EncryptedMismatch_ReturnsAlreadyExists(t *testing.T) {
+	driver := newTestDriver()
+	_, err := driver.CreateVolume(context.Background(), createVolumeRequest(testGiB))
+	if err != nil {
+		t.Fatalf("create first volume: %v", err)
+	}
+	req := createVolumeRequest(testGiB)
+	req.Parameters[paramEncrypted] = "true"
+	_, err = driver.CreateVolume(context.Background(), req)
+	if status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("expected AlreadyExists, got %s (%v)", status.Code(err), err)
+	}
+}
+
+func TestCreateVolume_InvalidEncrypted_ReturnsInvalidArgument(t *testing.T) {
+	driver := newTestDriver()
+	req := createVolumeRequest(testGiB)
+	req.Parameters[paramEncrypted] = "yes"
+	_, err := driver.CreateVolume(context.Background(), req)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %s (%v)", status.Code(err), err)
+	}
+}
+
 func TestCreateVolume_UnknownParameter_ReturnsInvalidArgument(t *testing.T) {
 	driver := newTestDriver()
 	req := createVolumeRequest(testGiB)

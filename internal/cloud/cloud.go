@@ -33,6 +33,7 @@ type VolumeSpec struct {
 	ProjectID        string
 	Type             string
 	SnapshotID       string
+	Encrypted        bool
 	Metadata         map[string]string
 }
 
@@ -43,6 +44,7 @@ type Volume struct {
 	Status           VolumeStatus
 	AvailabilityZone string
 	Type             string
+	Encrypted        bool
 	Multiattach      bool
 	Metadata         map[string]string
 	Attachments      []Attachment

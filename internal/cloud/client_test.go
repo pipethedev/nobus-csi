@@ -55,6 +55,42 @@ func TestClient_CreateVolume_UsesDocumentedEndpointAndAuth(t *testing.T) {
 	}
 }
 
+func TestClient_CreateVolume_SendsEncrypted(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var body volumeCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if !body.Encrypted {
+			t.Fatalf("expected encrypted create request, got %+v", body)
+		}
+		return jsonOK(t, &volumeResponse{
+			Status: true,
+			Data: apiVolume{
+				ID:        "vol-1",
+				Name:      "data",
+				Size:      2,
+				Status:    VolumeStatusAvailable,
+				Encrypted: true,
+			},
+		}), nil
+	})
+	client := newTestClient(t, transport)
+	volume, err := client.CreateVolume(context.Background(), VolumeSpec{
+		Name:             "data",
+		SizeBytes:        2 * bytesPerGiB,
+		ProjectID:        "project",
+		AvailabilityZone: "az1",
+		Encrypted:        true,
+	})
+	if err != nil {
+		t.Fatalf("create volume: %v", err)
+	}
+	if !volume.Encrypted {
+		t.Fatalf("expected encrypted volume, got %+v", volume)
+	}
+}
+
 func TestClient_CreateVolume_UsesRequestAvailabilityZone(t *testing.T) {
 	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return jsonOK(t, &volumeResponse{

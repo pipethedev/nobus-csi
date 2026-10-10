@@ -122,6 +122,7 @@ helm install nobus-csi deploy/helm/nobus-csi \
 | `project_id` | string | `NOBUS_PROJECT_ID` | no | Nobus project used for the volume. |
 | `availability_zone` | string | `NOBUS_AVAILABILITY_ZONE` | no | Nobus availability zone. |
 | `volume_type` | string | `NOBUS_VOLUME_TYPE` | no | Nobus volume type. |
+| `encrypted` | `true` or `false` | `false` | no | Create the volume with Nobus encryption. The driver returns the same key in the volume context. |
 | `region` | string | none | no | Reserved for topology context. |
 
 Unknown parameters are rejected with `INVALID_ARGUMENT`.

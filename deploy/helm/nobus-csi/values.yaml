@@ -19,6 +19,7 @@ nobus:
   projectId: ""
   availabilityZone: ""
   volumeType: ""
+  encrypted: false
   apiKey: ""
   existingSecret: ""
   secretName: ""

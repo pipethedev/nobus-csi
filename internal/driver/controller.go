@@ -160,7 +160,7 @@ func attachedToNode(volume cloud.Volume, node string) bool {
 }
 
 func compatibleVolume(volume cloud.Volume, spec cloud.VolumeSpec) bool {
-	return volume.SizeBytes == spec.SizeBytes && volume.AvailabilityZone == spec.AvailabilityZone && volume.Type == spec.Type
+	return volume.SizeBytes == spec.SizeBytes && volume.AvailabilityZone == spec.AvailabilityZone && volume.Type == spec.Type && volume.Encrypted == spec.Encrypted
 }
 
 func (d *Driver) reconcileCreatedVolume(ctx context.Context, spec cloud.VolumeSpec) (*cloud.Volume, error) {

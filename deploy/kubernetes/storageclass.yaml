@@ -8,6 +8,7 @@ volumeBindingMode: WaitForFirstConsumer
 parameters:
   project_id: replace-me
   availability_zone: replace-me
+  # encrypted: "true"
   csi.storage.k8s.io/provisioner-secret-name: nobus-csi
   csi.storage.k8s.io/provisioner-secret-namespace: kube-system
   csi.storage.k8s.io/controller-publish-secret-name: nobus-csi

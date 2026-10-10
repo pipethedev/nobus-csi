@@ -3,6 +3,7 @@ package driver
 import (
 	"cmp"
 	"slices"
+	"strconv"
 
 	"github.com/brimble/nobus-csi/internal/cloud"
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -14,6 +15,7 @@ const (
 	paramAvailabilityZone = "availability_zone"
 	paramProjectID        = "project_id"
 	paramVolumeType       = "volume_type"
+	paramEncrypted        = "encrypted"
 	paramRegion           = "region"
 	TopologyZoneKey       = "topology.csi.nobus.io/zone"
 	TopologyRegionKey     = "topology.csi.nobus.io/region"
@@ -24,6 +26,7 @@ var supportedParameters = []string{
 	paramProjectID,
 	paramRegion,
 	paramVolumeType,
+	paramEncrypted,
 }
 
 func volumeSpec(req *csi.CreateVolumeRequest, defaults Config) (cloud.VolumeSpec, error) {
@@ -48,6 +51,13 @@ func volumeSpec(req *csi.CreateVolumeRequest, defaults Config) (cloud.VolumeSpec
 	if project == "" {
 		return cloud.VolumeSpec{}, status.Error(codes.InvalidArgument, "project_id is required")
 	}
+	encrypted := false
+	if raw, ok := params[paramEncrypted]; ok {
+		encrypted, err = strconv.ParseBool(raw)
+		if err != nil {
+			return cloud.VolumeSpec{}, status.Error(codes.InvalidArgument, "encrypted must be true or false")
+		}
+	}
 	return cloud.VolumeSpec{
 		Name:             req.GetName(),
 		SizeBytes:        size,
@@ -55,6 +65,7 @@ func volumeSpec(req *csi.CreateVolumeRequest, defaults Config) (cloud.VolumeSpec
 		ProjectID:        project,
 		Type:             cmp.Or(params[paramVolumeType], defaults.VolumeType),
 		SnapshotID:       snapshotSource(req, defaults.AvailabilityZone),
+		Encrypted:        encrypted,
 		Metadata:         map[string]string{"csi.driver": defaults.DriverName},
 	}, nil
 }
@@ -161,5 +172,6 @@ func volumeContext(volume cloud.Volume) map[string]string {
 	if volume.Type != "" {
 		context[paramVolumeType] = volume.Type
 	}
+	context[paramEncrypted] = strconv.FormatBool(volume.Encrypted)
 	return context
 }
