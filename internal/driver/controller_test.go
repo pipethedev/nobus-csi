@@ -55,12 +55,29 @@ func TestCreateVolume_Encrypted_PublishesVolumeContext(t *testing.T) {
 	if created.GetVolume().GetVolumeContext()[paramEncrypted] != "true" {
 		t.Fatalf("expected encrypted volume context, got %#v", created.GetVolume().GetVolumeContext())
 	}
+	if created.GetVolume().GetVolumeContext()[paramVolumeType] != cloud.EncryptedVolumeType {
+		t.Fatalf("expected provider-selected %s type, got %#v", cloud.EncryptedVolumeType, created.GetVolume().GetVolumeContext())
+	}
 	again, err := driver.CreateVolume(context.Background(), req)
 	if err != nil {
 		t.Fatalf("create existing encrypted volume: %v", err)
 	}
 	if again.GetVolume().GetVolumeId() != created.GetVolume().GetVolumeId() {
 		t.Fatalf("expected existing volume id %q, got %q", created.GetVolume().GetVolumeId(), again.GetVolume().GetVolumeId())
+	}
+}
+
+func TestCreateVolume_ExplicitTypeMismatch_ReturnsAlreadyExists(t *testing.T) {
+	driver := newTestDriver()
+	req := createVolumeRequest(testGiB)
+	req.Parameters[paramVolumeType] = "ssd"
+	if _, err := driver.CreateVolume(context.Background(), req); err != nil {
+		t.Fatalf("create first volume: %v", err)
+	}
+	req.Parameters[paramVolumeType] = "hdd"
+	_, err := driver.CreateVolume(context.Background(), req)
+	if status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("expected AlreadyExists, got %s (%v)", status.Code(err), err)
 	}
 }
 

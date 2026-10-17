@@ -58,6 +58,11 @@ type Attachment struct {
 type VolumeStatus string
 
 const (
+	DefaultVolumeType   = "__DEFAULT__"
+	EncryptedVolumeType = "Encrypted-v1"
+)
+
+const (
 	VolumeStatusAvailable VolumeStatus = "available"
 	VolumeStatusInUse     VolumeStatus = "in-use"
 	VolumeStatusCreating  VolumeStatus = "creating"

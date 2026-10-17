@@ -159,8 +159,10 @@ func attachedToNode(volume cloud.Volume, node string) bool {
 	return false
 }
 
+// An empty requested type lets Nobus choose: it resolves to __DEFAULT__, or to
+// Encrypted-v1 when encryption is requested, so only an explicit type must match.
 func compatibleVolume(volume cloud.Volume, spec cloud.VolumeSpec) bool {
-	return volume.SizeBytes == spec.SizeBytes && volume.AvailabilityZone == spec.AvailabilityZone && volume.Type == spec.Type && volume.Encrypted == spec.Encrypted
+	return volume.SizeBytes == spec.SizeBytes && volume.AvailabilityZone == spec.AvailabilityZone && (spec.Type == "" || volume.Type == spec.Type) && volume.Encrypted == spec.Encrypted
 }
 
 func (d *Driver) reconcileCreatedVolume(ctx context.Context, spec cloud.VolumeSpec) (*cloud.Volume, error) {

@@ -34,7 +34,7 @@ func (f *Fake) CreateVolume(_ context.Context, spec VolumeSpec) (*Volume, error)
 	defer f.mu.Unlock()
 	for _, volume := range f.volumes {
 		if volume.Name == spec.Name {
-			if volume.SizeBytes != spec.SizeBytes || volume.AvailabilityZone != spec.AvailabilityZone || volume.Type != spec.Type || volume.Encrypted != spec.Encrypted {
+			if volume.SizeBytes != spec.SizeBytes || volume.AvailabilityZone != spec.AvailabilityZone || (spec.Type != "" && volume.Type != spec.Type) || volume.Encrypted != spec.Encrypted {
 				return nil, ErrAlreadyExists
 			}
 			clone := volume
@@ -49,12 +49,22 @@ func (f *Fake) CreateVolume(_ context.Context, spec VolumeSpec) (*Volume, error)
 		SizeBytes:        spec.SizeBytes,
 		Status:           VolumeStatusAvailable,
 		AvailabilityZone: spec.AvailabilityZone,
-		Type:             spec.Type,
+		Type:             providerVolumeType(spec),
 		Encrypted:        spec.Encrypted,
 		Metadata:         maps.Clone(spec.Metadata),
 	}
 	f.volumes[id] = volume
 	return &volume, nil
+}
+
+func providerVolumeType(spec VolumeSpec) string {
+	if spec.Type != "" {
+		return spec.Type
+	}
+	if spec.Encrypted {
+		return EncryptedVolumeType
+	}
+	return DefaultVolumeType
 }
 
 func (f *Fake) GetVolumeByID(_ context.Context, id string) (*Volume, error) {

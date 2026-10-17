@@ -224,6 +224,29 @@ func TestClient_DeleteVolume_SendsAvailabilityZone(t *testing.T) {
 	}
 }
 
+func TestClient_DeleteVolume_WaitsForAsyncRemoval(t *testing.T) {
+	requests := 0
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		switch requests {
+		case 1:
+			return jsonOK(t, statusOnlyResponse{Status: true}), nil
+		case 2, 3:
+			return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1", Status: VolumeStatusDeleting})), nil
+		default:
+			return jsonOK(t, volumeListWith()), nil
+		}
+	})
+	client := newTestClient(t, transport)
+	client.poll = time.Millisecond
+	if err := client.DeleteVolume(context.Background(), "vol-1"); err != nil {
+		t.Fatalf("delete volume: %v", err)
+	}
+	if requests != 4 {
+		t.Fatalf("expected delete plus 3 list polls, got %d requests", requests)
+	}
+}
+
 func TestClient_DeleteVolume_StillListedReturnsUnavailable(t *testing.T) {
 	requests := 0
 	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -234,7 +257,10 @@ func TestClient_DeleteVolume_StillListedReturnsUnavailable(t *testing.T) {
 		return jsonOK(t, volumeListWith(apiVolume{ID: "vol-1"})), nil
 	})
 	client := newTestClient(t, transport)
-	err := client.DeleteVolume(context.Background(), "vol-1")
+	client.poll = time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	err := client.DeleteVolume(ctx, "vol-1")
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("expected ErrUnavailable, got %v", err)
 	}

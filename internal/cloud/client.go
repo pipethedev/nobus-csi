@@ -30,6 +30,7 @@ const (
 	defaultTimeout   = 2 * time.Minute
 	attachWait       = 3 * time.Minute
 	attachPoll       = 2 * time.Second
+	deleteWait       = 2 * time.Minute
 )
 
 type Client struct {
@@ -139,13 +140,33 @@ func (c *Client) DeleteVolume(ctx context.Context, id string) error {
 	if err := c.do(ctx, http.MethodDelete, volumePath, query, nil, nil); err != nil {
 		return err
 	}
-	if _, err := c.getVolumeByIDInZone(ctx, id, c.config.AvailabilityZone); err != nil {
+	return c.waitVolumeDeleted(ctx, id)
+}
+
+// Nobus accepts the delete and removes the volume asynchronously.
+func (c *Client) waitVolumeDeleted(ctx context.Context, id string) error {
+	ctx, cancel := context.WithTimeout(ctx, deleteWait)
+	defer cancel()
+	timer := time.NewTimer(0)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	defer timer.Stop()
+	for {
+		_, err := c.getVolumeByIDInZone(ctx, id, c.config.AvailabilityZone)
 		if errors.Is(err, ErrNotFound) {
 			return nil
 		}
-		return err
+		if err != nil {
+			return fmt.Errorf("wait for deleted volume %s: %w", id, err)
+		}
+		timer.Reset(c.poll)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("volume %s still exists after delete: %w", id, ErrUnavailable)
+		case <-timer.C:
+		}
 	}
-	return ErrUnavailable
 }
 
 func (c *Client) ResizeVolume(ctx context.Context, id string, sizeBytes int64, availabilityZone string) (int64, error) {
